@@ -12,16 +12,27 @@ def load_data(cfg):
 
     return data
 
-
 def prepare_fit_data(df):
     fitdata = df[
         (df["freq"] < 4.2e5) |
         ((df["freq"] > 1e9) & (df["freq"] < 1.5e9))
-    ]
+    ].copy()
 
-    t = fitdata["obsdate"].values
-    nu = fitdata["freq"].values
-    y = fitdata["flux"].values * 1e-6
-    yerr = np.sqrt(fitdata["err"]**2 + fitdata["rms"]**2) * 1e-6
+    # 🧠 identify upper limits
+    is_detection = (fitdata["flux"] > 0) & (fitdata["err"] > 0)
+    is_upper = ~is_detection
 
-    return (t, nu), y, yerr
+    # ✅ detections (used for fitting)
+    det = fitdata[is_detection]
+
+    t = det["obsdate"].values
+    nu = det["freq"].values
+    print("Freq range (GHz):", nu.min(), nu.max())
+
+    y = det["flux"].values * 1e-6
+    yerr = np.sqrt(det["err"]**2 + det["rms"]**2).values * 1e-6
+
+    # 📦 also return upper limits for plotting
+    upper = fitdata[is_upper]
+
+    return (t, nu), y, yerr, upper
