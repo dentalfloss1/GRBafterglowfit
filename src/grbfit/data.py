@@ -3,16 +3,36 @@ import numpy as np
 
 
 def load_data(cfg):
-    plotdata = pd.read_csv(cfg["data"]["radio_file"])
-    otherdata = pd.read_csv(cfg["data"]["other_file"])
+    files = []
 
-    plotdata = plotdata.sort_values(by="freq").copy()
+    data_cfg = cfg.get("data", {})
 
-    data = pd.concat([plotdata, otherdata])
+    # 📡 radio (required)
+    if "radio_file" in data_cfg:
+        files.append(pd.read_csv(data_cfg["radio_file"]))
+
+    # 📄 optional files
+    for key in ["other_file", "batxrt_file"]:
+        if key in data_cfg and data_cfg[key]:
+            try:
+                df = pd.read_csv(data_cfg[key])
+                files.append(df)
+            except FileNotFoundError:
+                print(f"⚠️ Warning: {data_cfg[key]} not found, skipping")
+
+    if len(files) == 0:
+        raise ValueError("❌ No data files provided in config")
+
+    # 📦 combine everything
+    data = pd.concat(files, ignore_index=True)
+
+    # optional: sort for sanity
+    data = data.sort_values(by="freq").copy()
 
     return data
 
 def prepare_fit_data(df):
+# TODO: replace with config-driven filtering
     fitdata = df[
         (df["freq"] < 4.2e5) |
         ((df["freq"] > 1e9) & (df["freq"] < 1.5e9))

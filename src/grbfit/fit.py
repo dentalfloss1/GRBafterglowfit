@@ -11,6 +11,21 @@ def build_param_vector(cfg):
     else:
         keys = ["f0", "f0_rev", "nua0_rev", "nua_0", "num_0", "nuc_0"]
 
+    tj = cfg["fit"]["initial_guess"].get("t_j", None)
+    
+    if tj is not None:
+        keys.append("t_j")
+
+    cfg["fit"]["param_keys"] = keys
+
+    if tj is not None and "t_j" not in cfg["fit"]["bounds"]:
+        raise ValueError(
+        "❌ t_j is specified but no bounds provided.\n"
+        "Add to config:\n"
+        "  bounds:\n"
+        "    t_j: [min, max]"
+        )
+
     # 🔢 build p0
     p0 = np.array([
         float(cfg["fit"]["initial_guess"][k])
@@ -33,21 +48,37 @@ def make_model(cfg):
     t0 = cfg["burst"]["t0"]
 
     if cfg["model"]["type"] == "forward_only":
-
         def model(theta, ivar):
-            f0, nua_0, num_0, nuc_0 = theta
-            return forward_model(ivar, f0, nua_0, num_0, nuc_0, k, t0, p)
+            params = dict(zip(cfg["fit"]["param_keys"], theta))
+            return forward_model(
+                                 ivar,
+                                 params["f0"],
+                                 params["nua_0"],
+                                 params["num_0"],
+                                 params["nuc_0"],
+                                 cfg["model"]["k"],
+                                 cfg["burst"]["t0"],
+                                 cfg["model"]["p"],
+                                 t_j=params.get("t_j", None),
+                             )
 
     else:
-
         def model(theta, ivar):
-            f0, f0_rev, nua0_rev, nua_0, num_0, nuc_0 = theta
+            params = dict(zip(cfg["fit"]["param_keys"], theta))
+        
             return forward_reverse_model(
-                ivar, f0, f0_rev, nua0_rev,
-                nua_0, num_0, nuc_0,
-                k, t0, p
+                ivar,
+                params["f0"],
+                params["f0_rev"],
+                params["nua0_rev"],
+                params["nua_0"],
+                params["num_0"],
+                params["nuc_0"],
+                cfg["model"]["k"],
+                cfg["burst"]["t0"],
+                cfg["model"]["p"],
+                t_j=params.get("t_j", None),
             )
-
     return model
 
 
@@ -86,9 +117,6 @@ def run_mcmc(cfg, xdata, ydata, yerr, nwalkers=32, nsteps=2000):
     model = make_model(cfg)
 
     ndim = len(p0)
-
-    # Initialize walkers around initial guess
-    keys, p0, bounds = build_param_vector(cfg)
 
     pos = []
     for _ in range(nwalkers):

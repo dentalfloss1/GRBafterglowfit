@@ -24,7 +24,7 @@ data:
   batxrt_file: batxrt.txt
 
 model:
-  type: forward_reverse   # options: forward_only, forward_reverse
+  type: forward_only   # options: forward_only, forward_reverse
   k: 2
   p: 2.2
 
@@ -36,7 +36,7 @@ fit:
     nua_0: 13
     num_0: 100
     nuc_0: 8e8
-
+    t_j: null
   bounds:
     f0: [1e-6, 1]
     f0_rev: [3e-5, 1e5]
@@ -64,7 +64,7 @@ def summarize_chain(samples, keys):
 # 🔺 Corner plot (parameter correlations + constraints)
 def plot_corner(samples, keys):
     print("📈 Generating corner plot...")
-    fig = corner.corner(samples, labels=keys, show_titles=True)
+    fig = corner.corner(samples, labels=keys, show_titles=True, fitle_fmt=".2e")
     plt.savefig("corner.png", dpi=200)  # 💾 save plot
     plt.close()
     print("✅ corner.png saved")
@@ -127,6 +127,18 @@ COLOR_CYCLE = [
 ]
 
 def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50):
+    # 🔍 extract median t_j if present
+    t_j_median = None
+    
+    param_keys = cfg["fit"]["param_keys"]
+    
+    if "t_j" in param_keys:
+        tj_index = param_keys.index("t_j")
+        t_j_samples = samples[:, tj_index]
+    
+        t_j_median = np.median(t_j_samples)
+
+
     model = make_model(cfg)
     t, nu = xdata
 
@@ -164,7 +176,17 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50
             y_data = y_data[order]
             y_err = y_err[order]
         
-            t_line = np.geomspace(t_data.min(), t_data.max(), 200)
+            t_panel = np.array(t[np.isin(nu, freq_group)])
+
+            t_min = t_panel.min()
+            t_max = t_panel.max()
+            
+            # optional padding (recommended)
+            t_min *= 0.8
+            t_max *= 1.2
+            
+            t_line = np.geomspace(t_min, t_max, 300)
+
             nu_line = np.full_like(t_line, freq)
         
             # 🍝 posterior curves
@@ -199,6 +221,57 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50
                 color=color,
                 linewidth=2.5
             )
+            # 🔻 upper limits (3σ)
+            if upper_df is not None and len(upper_df) > 0:
+                upper_mask = upper_df["freq"] == freq
+                upper_subset = upper_df[upper_mask]
+            
+                if len(upper_subset) > 0:
+                    t_upper = upper_subset["obsdate"].values
+                    y_upper = 3.0 * upper_subset["rms"].values * 1e-6  # convert to Jy
+            
+                    ax.scatter(
+                        t_upper,
+                        y_upper * 1e6,   # back to μJy for plotting
+                        marker="v",
+                        color="gray",
+                        s=40,
+                        alpha=0.8,
+                        label=None  # avoid cluttering legend
+                    )
+            
+                    # optional: small vertical line to indicate limit
+                    for tu, yu in zip(t_upper, y_upper * 1e6):
+                        ax.plot(
+                            [tu, tu],
+                            [yu * 0.5, yu],
+                            color="gray",
+                            alpha=0.6,
+                            linewidth=1
+                        )
+           # 📍 plot jet break location
+        if t_j_median is not None:
+            ax.axvline(
+                t_j_median,
+                linestyle="--",
+                color=color,
+                alpha=0.5,
+                linewidth=1
+            )
+
+        y_all = []
+        
+        for freq in freq_group:
+            mask = nu == freq
+            y_all.extend((ydata[mask] * 1e6))
+        
+        y_all = np.array(y_all)
+        
+        ymin = y_all.min() * 0.5
+        ymax = y_all.max() * 2
+        
+        ax.set_ylim(ymin, ymax)
+
         # 📏 axes
         ax.set_xscale("log")
         ax.set_yscale("log")
@@ -217,6 +290,10 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50
 
     print("✅ posterior_models.png saved")
 def normalize_config(cfg):
+
+    if "model" not in cfg or "type" not in cfg["model"]:
+        raise ValueError("❌ config.yaml must specify model.type (forward_only or forward_reverse)")
+
     # 🔢 model params
     cfg["model"]["k"] = int(cfg["model"]["k"])
     cfg["model"]["p"] = float(cfg["model"]["p"])
@@ -226,7 +303,8 @@ def normalize_config(cfg):
 
     # 🔢 initial guesses
     for k, v in cfg["fit"]["initial_guess"].items():
-        cfg["fit"]["initial_guess"][k] = float(v)
+        if v is not None:
+            cfg["fit"]["initial_guess"][k] = float(v)
 
     # 🔢 bounds
     for k, (low, high) in cfg["fit"]["bounds"].items():

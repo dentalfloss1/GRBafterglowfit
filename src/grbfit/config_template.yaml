@@ -8,8 +8,8 @@ data:
   batxrt_file: batxrt.txt
 
 model:
-  type: forward_reverse   # or forward_only
-  k: 2
+  type: forward_only   # or forward_reverse
+  k: 2 # or 0
   p: 2.2
 
 fit:
