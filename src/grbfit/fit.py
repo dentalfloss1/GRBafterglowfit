@@ -46,6 +46,7 @@ def make_model(cfg):
     k = cfg["model"]["k"]
     p = cfg["model"]["p"]
     t0 = cfg["burst"]["t0"]
+    t0_rev = cfg["burst"]["t0_rev"]
 
     if cfg["model"]["type"] == "forward_only":
         def model(theta, ivar):
@@ -76,6 +77,7 @@ def make_model(cfg):
                 params["nuc_0"],
                 cfg["model"]["k"],
                 cfg["burst"]["t0"],
+                cfg["burst"]["t0_rev"],
                 cfg["model"]["p"],
                 t_j=params.get("t_j", None),
             )
@@ -93,14 +95,23 @@ def log_prior(theta, bounds):
 
 def log_likelihood(theta, model, xdata, ydata, yerr):
     model_vals = model(theta, xdata)
+    # 🚨 guard against bad model output
+    if not np.all(np.isfinite(model_vals)):
+        return -np.inf
+    
+    if np.any(model_vals <= 0):
+        return -np.inf
     eps = 1e-30  # avoid log(0)
 
     log_data = np.log10(ydata + eps)
     log_model = np.log10(model_vals + eps)
     
     log_err = yerr / (ydata + eps)  # fractional error
-    
-    return -0.5 * np.sum(((log_data - log_model) / log_err) ** 2)
+    log_like = -0.5 * np.sum(((log_data - log_model) / log_err) ** 2)
+
+    if not np.isfinite(log_like):
+        return -np.inf
+    return log_like 
 
 
 def log_probability(theta, model, xdata, ydata, yerr, bounds):

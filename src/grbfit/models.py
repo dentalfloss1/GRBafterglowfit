@@ -1,6 +1,25 @@
 import numpy as np
+import traceback
 
+def dsbpl(x,A,xb1,alpha1,alpha2,xb2,alpha3,s=0.2):
+    """
+    from chatGPT
+    Multiplicative smoothly broken power law
+    """
 
+    x = np.asarray(x)
+    alpha1 = -alpha1
+    alpha2 = -alpha2
+    alpha3 = -alpha3
+    s1 = s
+    s2 = s
+
+    term1 = (x / xb1) ** (-alpha1)
+
+    smooth1 = (1 + (x / xb1) ** (1.0 / s1)) ** ((alpha1 - alpha2) * s1)
+    smooth2 = (1 + (x / xb2) ** (1.0 / s2)) ** ((alpha2 - alpha3) * s2)
+
+    return A * term1 * smooth1 * smooth2
 def tsbpl(x, A, xb1, xb2, xb3, alpha1, alpha2, alpha3, alpha4, s=0.2):
     x = np.asarray(x)
 
@@ -209,22 +228,47 @@ def theory_bigsbpl(ivar, f0, nu0_1, nu0_2,nu0_3, k, t0,jet_break=None, p=2.2):
 
 
 
-
-def reverse_shock(ivar, f0, nu0_1, k, t0, p=2.2):
+# Relativistic Rev. Shock
+def reverse_shock(ivar, f0, nu0_1, k, t0_rev,p=2.2,givenuvals=False):
     t, nu = ivar
-
-    a1 = -(47 - 10 * k) / (12 * (4 - k))
-    b1 = -(32 - 7 * k) / (15 * (4 - k))
-
     res = []
-
-    for tval, nuval in zip(t, nu):
-        fnu_m = f0 * (tval / t0) ** a1
-        nua = nu0_1 * (tval / t0) ** b1
-        res.append(fnu_m * (nuval / nua) ** 2)
-
-    return np.array(res)
-
+    t0_rev=0.05
+    nu0_2 = 1e12
+    nu0_3 = 1e18
+    a1 = -(47-10*k)/(12*(4-k))
+    b1 = -(32-7*k)/(15*(4-k))
+    b2 = -(73-14*k)/(12*(4-k))
+    b3 = -(73-14*k)/(12*(4-k))
+    nuvals = []
+    try:
+        for tval,nuval in zip(t,nu):
+            fnu_m = f0*(tval/t0_rev)**a1
+            nua = nu0_1*(tval/t0_rev)**b1
+            num = nu0_2*(tval/t0_rev)**b2
+            nuc = nu0_3*(tval/t0_rev)**b3
+            if True: #nuval < nua:
+                c1 = 2 
+                c2 = 1/3
+                c3 = -(p-1)/2
+                c4 = -(p-1)/2 - 0.1
+                fpk = fnu_m*(nua/num)**(1/3)
+                result = tsbpl(nuval,fpk,nua,num,nuc,c1,c2,c3,c4)
+            else:
+                c1 = 1/3
+                c2 = -(p-1)/2
+                c3 = -(p-1)/2 - 0.1
+                fpk = fnu_m
+                result = dsbpl(nuval,fpk,num,c1,c2,nuc,c3)
+            res.append(result)
+            if givenuvals:
+                nuvals.append((tval,nua,num,nuc))
+    except Exception as e:
+        print(traceback.format_exc())
+        print(t,nu,ivar)
+    if givenuvals:
+        return np.array(res),np.array(nuvals) 
+    else:
+        return np.array(res)
 
 def forward_model(ivar, f0, nua_0, num_0, nuc_0, k, t0, p, t_j=None):
     return theory_bigsbpl(ivar, f0, nua_0, num_0, nuc_0, k, t0, jet_break=t_j, p=p)
@@ -235,8 +279,8 @@ def forward_reverse_model(
     f0, f0_rev,
     nua0_rev,
     nua_0, num_0, nuc_0,
-    k, t0, p, t_j=None
+    k, t0, t0_rev, p, t_j=None
 ):
     fwd = theory_bigsbpl(ivar, f0, nua_0, num_0, nuc_0, k, t0, jet_break=t_j, p=p)
-    rev = reverse_shock(ivar, f0_rev, nua0_rev, k, t0, p)
+    rev = reverse_shock(ivar, f0_rev, nua0_rev, k, t0_rev, p)
     return fwd + rev

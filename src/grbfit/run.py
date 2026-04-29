@@ -8,6 +8,7 @@ from grbfit.data import load_data, prepare_fit_data  # 📥 data pipeline
 from grbfit.fit import run_mcmc, make_model  # 🔧 fitting machinery
 import os  # 📂 file system checks
 import sys  # 🚪 clean exit
+import pandas as pd
 
 def create_template_config(path="config.yaml"):
     print("📝 No config.yaml found — creating template...")
@@ -17,6 +18,9 @@ def create_template_config(path="config.yaml"):
 burst:
   name: your_grb_name_here
   t0: 1.0
+  t0_rev: 0.05
+  fitstart: 0.01
+  z: null
 
 data:
   radio_file: grbmeas.csv
@@ -44,6 +48,8 @@ fit:
     nua_0: [6, 15]
     num_0: [33, 1e4]
     nuc_0: [1e8, 2e9]
+  max_rest_freq: 2.47e6 # GHz, FUV in rest frame, only used in z is defined. 
+  fit_xrt: false
 """
 
     with open(path, "w") as f:
@@ -64,7 +70,7 @@ def summarize_chain(samples, keys):
 # 🔺 Corner plot (parameter correlations + constraints)
 def plot_corner(samples, keys):
     print("📈 Generating corner plot...")
-    fig = corner.corner(samples, labels=keys, show_titles=True, fitle_fmt=".2e")
+    fig = corner.corner(samples, labels=keys, show_titles=True, title_fmt=".2e")
     plt.savefig("corner.png", dpi=200)  # 💾 save plot
     plt.close()
     print("✅ corner.png saved")
@@ -126,7 +132,7 @@ COLOR_CYCLE = [
     "#0072B2",  # navy blue
 ]
 
-def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50):
+def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_df, instrument, n_draws=50):
     # 🔍 extract median t_j if present
     t_j_median = None
     
@@ -141,9 +147,13 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50
 
     model = make_model(cfg)
     t, nu = xdata
-
-
-    freq_bins = make_frequency_bins(nu, max_per_bin=3)
+    # 👇 collect ALL frequencies (fitted + excluded + upper)
+    nu_all = np.concatenate([
+        nu,
+        upper_df["freq"].values if upper_df is not None else [],
+        excluded_df["freq"].values if excluded_df is not None else []
+    ])
+    freq_bins = make_frequency_bins(nu_all, max_per_bin=3)
     nbins = len(freq_bins)
 
     fig, axes = plt.subplots(
@@ -155,6 +165,17 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50
     if nbins == 1:
         axes = [axes]
 
+    t_all = np.concatenate([
+        t,
+        upper_df["obsdate"].values if upper_df is not None else [],
+        excluded_df["obsdate"].values if excluded_df is not None else []
+    ])
+    
+    nu_all_data = np.concatenate([
+        nu,
+        upper_df["freq"].values if upper_df is not None else [],
+        excluded_df["freq"].values if excluded_df is not None else []
+    ])
     # 🎲 choose posterior samples
     inds = np.random.randint(len(samples), size=n_draws)
     median_theta = np.median(samples,axis=0)
@@ -164,7 +185,7 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50
             color = COLOR_CYCLE[i % len(COLOR_CYCLE)]
             marker = MARKERS[i % len(MARKERS)]
         
-            mask = nu == freq
+            mask = (nu == freq) & (instrument != "XRT") & (instrument != "BAT")
         
             t_data = np.array(t[mask])
             y_data = np.array(ydata[mask])
@@ -175,16 +196,9 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50
             t_data = t_data[order]
             y_data = y_data[order]
             y_err = y_err[order]
-        
-            t_panel = np.array(t[np.isin(nu, freq_group)])
-
-            t_min = t_panel.min()
-            t_max = t_panel.max()
-            
-            # optional padding (recommended)
-            t_min *= 0.8
-            t_max *= 1.2
-            
+             
+            t_min = t_all[t_all > 0].min() * 0.8
+            t_max = t_all.max() * 1.2
             t_line = np.geomspace(t_min, t_max, 300)
 
             nu_line = np.full_like(t_line, freq)
@@ -200,19 +214,85 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50
                     color=color,
                     alpha=0.08
                 )
-        
-            # 📡 data
-            ax.errorbar(
-                t_data,
-                y_data * 1e6,
-                yerr=y_err * 1e6,
-                fmt=marker,
-                color=color,
-                linestyle="none",
-                markersize=5,
-                label=label_helper(freq)
-            )
-        
+
+
+            excl_subset = pd.DataFrame()   # 👈 safe empty default
+
+            if excluded_df is not None and len(excluded_df) > 0:
+                excl_mask = (excluded_df["freq"] == freq)
+                excl_subset = excluded_df[excl_mask]
+            
+            has_excluded = len(excl_subset) > 0
+            has_detection = len(t_data) > 0
+            if has_detection:
+                label = label_helper(freq)
+            elif has_excluded:
+                label = label_helper(freq) + " (excluded)"
+            else:
+                label = None
+            if len(t_data) > 0: 
+                # 📡 data
+                ax.errorbar(
+                    t_data,
+                    y_data * 1e6,
+                    yerr=y_err * 1e6,
+                    fmt=marker,
+                    color=color,
+                    linestyle="none",
+                    markersize=5,
+                    label=label
+                )
+            # 🚫 excluded data (not used in fit)
+            if excluded_df is not None and len(excluded_df) > 0:
+                excl_xrt = excl_subset[excl_subset["instrument"] == "XRT"]
+                excl_bat = excl_subset[excl_subset["instrument"] == "BAT"]
+                excl_other = excl_subset[
+                    (excl_subset["instrument"] != "XRT") &
+                    (excl_subset["instrument"] != "BAT")
+                ]
+                if len(excl_other) > 0:
+                    t_excl = excl_other["obsdate"].values
+                    y_excl = excl_other["flux"].values
+                    ax.scatter(
+                        t_excl,
+                        y_excl,
+                        marker=marker,        # 👈 visually distinct
+                        color=color,
+                        facecolors="none",
+                        linewidths=1.5,
+                        alpha=0.8,
+                        s=50,
+                        label=label     
+                    )
+                if len(excl_xrt) > 0:
+                    t_excl = excl_xrt["obsdate"].values
+                    y_excl = excl_xrt["flux"].values
+                    ax.scatter(
+                        t_excl,
+                        y_excl,
+                        marker="s",        # 👈 visually distinct
+                        color="black",
+                        facecolors="none",
+                        linewidths=1.5,
+                        alpha=0.8,
+                        s=50,
+                        label="Swift XRT (excluded)"
+                    )
+                if len(excl_bat) > 0:
+                    t_excl = excl_bat["obsdate"].values
+                    y_excl = excl_bat["flux"].values
+                    ax.scatter(
+                        t_excl,
+                        y_excl,
+                        marker="D",        # 👈 visually distinct
+                        color="red",
+                        facecolors="none",
+                        linewidths=1.5,
+                        alpha=0.8,
+                        s=50,
+                        label="Swift BAT (excluded)"
+                    )
+
             # 📈 median model
             y_med = model(median_theta, (t_line, nu_line)) * 1e6
             ax.plot(
@@ -221,6 +301,40 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50
                 color=color,
                 linewidth=2.5
             )
+            # 📡 XRT data (instrument-based, ignore frequency grouping)
+            xrt_mask = (instrument == "XRT") & (nu == freq)
+            
+            if np.any(xrt_mask):
+                t_xrt = t[xrt_mask]
+                y_xrt = ydata[xrt_mask]
+                yerr_xrt = yerr[xrt_mask]
+                ax.errorbar(
+                    t_xrt,
+                    y_xrt * 1e6,
+                    yerr=yerr_xrt * 1e6,
+                    fmt="s",
+                    color="black",
+                    linestyle="none",
+                    markersize=6,
+                    label="Swift-XRT"
+                )
+            bat_mask = (instrument == "BAT") & (nu == freq)
+
+            if np.any(bat_mask):
+                t_bat = t[bat_mask]
+                y_bat = ydata[bat_mask]
+                yerr_bat = yerr[bat_mask]
+            
+                ax.errorbar(
+                    t_bat,
+                    y_bat * 1e6,
+                    yerr=yerr_bat * 1e6,
+                    fmt="D",
+                    color="red",
+                    linestyle="none",
+                    markersize=6,
+                    label="Swift-BAT"
+                )
             # 🔻 upper limits (3σ)
             if upper_df is not None and len(upper_df) > 0:
                 upper_mask = upper_df["freq"] == freq
@@ -249,6 +363,7 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50
                             alpha=0.6,
                             linewidth=1
                         )
+                   
            # 📍 plot jet break location
         if t_j_median is not None:
             ax.axvline(
@@ -260,18 +375,57 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, n_draws=50
             )
 
         y_all = []
-        
+
+        # ✅ fitted data
         for freq in freq_group:
             mask = nu == freq
-            y_all.extend((ydata[mask] * 1e6))
+            y_pos = ydata[mask][ydata[mask] > 0]
+            y = ydata[mask]
+            err = yerr[mask]
+
+            det_mask = (y > 0) & ((y / err) > 3)
+            y_all.extend(y_pos * 1e6)
+        
+        # ✅ upper limits
+        if upper_df is not None and len(upper_df) > 0:
+            for freq in freq_group:
+                mask = upper_df["freq"] == freq
+                if np.any(mask):
+                    y_upper = 3.0 * upper_df["rms"].values[mask]
+                    y_all.extend(y_upper)
+        
+        # ✅ excluded data
+        if excluded_df is not None and len(excluded_df) > 0:
+            for freq in freq_group:
+                mask = excluded_df["freq"] == freq
+                if np.any(mask):
+                    y_excl = excluded_df["flux"].values[mask]
+                    err_excl = excluded_df["rms"].values[mask]
+                    
+                    det_mask = (y_excl > 0) & ((y_excl / err_excl) > 3)
+                    
+                    y_all.extend(y_excl[det_mask])
+                    y_all.extend(y_excl[y_excl > 0])
         
         y_all = np.array(y_all)
+        if len(y_all) == 0:
+            continue
         
+        # base limits from data
         ymin = y_all.min() * 0.5
         ymax = y_all.max() * 2
         
+        # enforce minimum 2 decades
+        min_ratio = 1e2
+        current_ratio = ymax / ymin
+        
+        if current_ratio < min_ratio:
+            center = np.sqrt(ymin * ymax)  # geometric mean (log-center)
+            half_span = np.sqrt(min_ratio)
+            ymin = center / half_span
+            ymax = center * half_span
+        
         ax.set_ylim(ymin, ymax)
-
         # 📏 axes
         ax.set_xscale("log")
         ax.set_yscale("log")
@@ -300,6 +454,14 @@ def normalize_config(cfg):
 
     # 🔢 burst
     cfg["burst"]["t0"] = float(cfg["burst"]["t0"])
+    
+    cfg["burst"]["t0_rev"] = float(cfg["burst"]["t0_rev"])
+    
+    cfg["burst"]["fitstart"] = float(cfg["burst"]["fitstart"])
+    
+    cfg["fit"]["max_rest_freq"] = float(cfg["fit"]["max_rest_freq"])
+    
+    cfg["fit"]["fit_xrt"] = bool(cfg["fit"].get("fit_xrt",False))
 
     # 🔢 initial guesses
     for k, v in cfg["fit"]["initial_guess"].items():
@@ -332,7 +494,7 @@ def main():
     df = load_data(cfg)
     print(f"📊 Loaded {len(df)} data points")
 
-    xdata, ydata, yerr, upper_df = prepare_fit_data(df)
+    xdata, ydata, yerr, upper_df, excluded_df, instrument = prepare_fit_data(df, cfg)
     print("🧹 Data prepared for fitting")
 
     # 🔥 run MCMC
@@ -353,7 +515,7 @@ def main():
     plot_corner(flat_samples, keys)
 
     # 🍝 posterior predictive plot
-    plot_posterior_models(cfg, flat_samples, xdata, ydata, yerr, upper_df)
+    plot_posterior_models(cfg, flat_samples, xdata, ydata, yerr, upper_df, excluded_df, instrument)
 
     print("🎉 All done!")
 
