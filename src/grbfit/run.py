@@ -135,6 +135,40 @@ COLOR_CYCLE = [
 def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_df, instrument, n_draws=50):
     # 🔍 extract median t_j if present
     t_j_median = None
+
+    def positive_mask(values):
+        values = np.asarray(values)
+        return np.isfinite(values) & (values > 0)
+
+    def positive_rows(df, column="flux"):
+        return df[positive_mask(df[column].values)]
+
+    def sentinel_upper_rows(df):
+        return df[(df["flux"] == -1) & (df["err"] == -1)]
+
+    def plot_upper_limit_rows(ax, rows, color):
+        if len(rows) == 0:
+            return []
+
+        t_upper = rows["obsdate"].values
+        y_upper = 3.0 * np.abs(rows["rms"].values)
+        upper_ok = positive_mask(y_upper)
+        t_upper = t_upper[upper_ok]
+        y_upper = y_upper[upper_ok]
+
+        if len(t_upper) == 0:
+            return []
+
+        ax.scatter(
+            t_upper,
+            y_upper,
+            marker="v",
+            color=color,
+            s=40,
+            alpha=0.8,
+            label=None
+        )
+        return y_upper
     
     param_keys = cfg["fit"]["param_keys"]
     
@@ -196,6 +230,11 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
             t_data = t_data[order]
             y_data = y_data[order]
             y_err = y_err[order]
+
+            data_ok = positive_mask(y_data) & np.isfinite(y_err) & (y_err >= 0) & (y_err < y_data)
+            t_data = t_data[data_ok]
+            y_data = y_data[data_ok]
+            y_err = y_err[data_ok]
              
             t_min = t_all[t_all > 0].min() * 0.8
             t_max = t_all.max() * 1.2
@@ -207,10 +246,11 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
             for j in inds:
                 theta = samples[j]
                 y_model = model(theta, (t_line, nu_line)) * 1e6
+                model_ok = positive_mask(y_model)
         
                 ax.plot(
-                    t_line,
-                    y_model,
+                    t_line[model_ok],
+                    y_model[model_ok],
                     color=color,
                     alpha=0.08
                 )
@@ -250,6 +290,14 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
                     (excl_subset["instrument"] != "XRT") &
                     (excl_subset["instrument"] != "BAT")
                 ]
+                excl_other_upper = sentinel_upper_rows(excl_other)
+                excl_xrt_upper = sentinel_upper_rows(excl_xrt)
+                excl_bat_upper = sentinel_upper_rows(excl_bat)
+
+                excl_other = positive_rows(excl_other)
+                excl_xrt = positive_rows(excl_xrt)
+                excl_bat = positive_rows(excl_bat)
+
                 if len(excl_other) > 0:
                     t_excl = excl_other["obsdate"].values
                     y_excl = excl_other["flux"].values
@@ -292,12 +340,16 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
                         s=50,
                         label="Swift BAT (excluded)"
                     )
+                plot_upper_limit_rows(ax, excl_other_upper, color)
+                plot_upper_limit_rows(ax, excl_xrt_upper, "black")
+                plot_upper_limit_rows(ax, excl_bat_upper, "red")
 
             # 📈 median model
             y_med = model(median_theta, (t_line, nu_line)) * 1e6
+            med_ok = positive_mask(y_med)
             ax.plot(
-                t_line,
-                y_med,
+                t_line[med_ok],
+                y_med[med_ok],
                 color=color,
                 linewidth=2.5
             )
@@ -308,33 +360,42 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
                 t_xrt = t[xrt_mask]
                 y_xrt = ydata[xrt_mask]
                 yerr_xrt = yerr[xrt_mask]
-                ax.errorbar(
-                    t_xrt,
-                    y_xrt * 1e6,
-                    yerr=yerr_xrt * 1e6,
-                    fmt="s",
-                    color="black",
-                    linestyle="none",
-                    markersize=6,
-                    label="Swift-XRT"
-                )
+                xrt_ok = positive_mask(y_xrt) & np.isfinite(yerr_xrt) & (yerr_xrt >= 0) & (yerr_xrt < y_xrt)
+                t_xrt = t_xrt[xrt_ok]
+                y_xrt = y_xrt[xrt_ok]
+                yerr_xrt = yerr_xrt[xrt_ok]
+                if len(t_xrt) > 0:
+                    ax.errorbar(
+                        t_xrt,
+                        y_xrt * 1e6,
+                        yerr=yerr_xrt * 1e6,
+                        fmt="s",
+                        color="black",
+                        linestyle="none",
+                        markersize=6,
+                        label="Swift-XRT"
+                    )
             bat_mask = (instrument == "BAT") & (nu == freq)
 
             if np.any(bat_mask):
                 t_bat = t[bat_mask]
                 y_bat = ydata[bat_mask]
                 yerr_bat = yerr[bat_mask]
-            
-                ax.errorbar(
-                    t_bat,
-                    y_bat * 1e6,
-                    yerr=yerr_bat * 1e6,
-                    fmt="D",
-                    color="red",
-                    linestyle="none",
-                    markersize=6,
-                    label="Swift-BAT"
-                )
+                bat_ok = positive_mask(y_bat) & np.isfinite(yerr_bat) & (yerr_bat >= 0) & (yerr_bat < y_bat)
+                t_bat = t_bat[bat_ok]
+                y_bat = y_bat[bat_ok]
+                yerr_bat = yerr_bat[bat_ok]
+                if len(t_bat) > 0:
+                    ax.errorbar(
+                        t_bat,
+                        y_bat * 1e6,
+                        yerr=yerr_bat * 1e6,
+                        fmt="D",
+                        color="red",
+                        linestyle="none",
+                        markersize=6,
+                        label="Swift-BAT"
+                    )
             # 🔻 upper limits (3σ)
             if upper_df is not None and len(upper_df) > 0:
                 upper_mask = upper_df["freq"] == freq
@@ -342,27 +403,31 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
             
                 if len(upper_subset) > 0:
                     t_upper = upper_subset["obsdate"].values
-                    y_upper = 3.0 * upper_subset["rms"].values * 1e-6  # convert to Jy
+                    y_upper = 3.0 * np.abs(upper_subset["rms"].values) * 1e-6  # convert to Jy
+                    upper_ok = positive_mask(y_upper)
+                    t_upper = t_upper[upper_ok]
+                    y_upper = y_upper[upper_ok]
             
-                    ax.scatter(
-                        t_upper,
-                        y_upper * 1e6,   # back to μJy for plotting
-                        marker="v",
-                        color="gray",
-                        s=40,
-                        alpha=0.8,
-                        label=None  # avoid cluttering legend
-                    )
-            
-                    # optional: small vertical line to indicate limit
-                    for tu, yu in zip(t_upper, y_upper * 1e6):
-                        ax.plot(
-                            [tu, tu],
-                            [yu * 0.5, yu],
+                    if len(t_upper) > 0:
+                        ax.scatter(
+                            t_upper,
+                            y_upper * 1e6,   # back to μJy for plotting
+                            marker="v",
                             color="gray",
-                            alpha=0.6,
-                            linewidth=1
+                            s=40,
+                            alpha=0.8,
+                            label=None  # avoid cluttering legend
                         )
+                
+                        # optional: small vertical line to indicate limit
+                        for tu, yu in zip(t_upper, y_upper * 1e6):
+                            ax.plot(
+                                [tu, tu],
+                                [yu * 0.5, yu],
+                                color="gray",
+                                alpha=0.6,
+                                linewidth=1
+                            )
                    
            # 📍 plot jet break location
         if t_j_median is not None:
@@ -379,20 +444,19 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
         # ✅ fitted data
         for freq in freq_group:
             mask = nu == freq
-            y_pos = ydata[mask][ydata[mask] > 0]
             y = ydata[mask]
             err = yerr[mask]
 
-            det_mask = (y > 0) & ((y / err) > 3)
-            y_all.extend(y_pos * 1e6)
+            plot_mask = positive_mask(y) & np.isfinite(err) & (err >= 0) & (err < y)
+            y_all.extend(y[plot_mask] * 1e6)
         
         # ✅ upper limits
         if upper_df is not None and len(upper_df) > 0:
             for freq in freq_group:
                 mask = upper_df["freq"] == freq
                 if np.any(mask):
-                    y_upper = 3.0 * upper_df["rms"].values[mask]
-                    y_all.extend(y_upper)
+                    y_upper = 3.0 * np.abs(upper_df["rms"].values[mask])
+                    y_all.extend(y_upper[positive_mask(y_upper)])
         
         # ✅ excluded data
         if excluded_df is not None and len(excluded_df) > 0:
@@ -400,14 +464,12 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
                 mask = excluded_df["freq"] == freq
                 if np.any(mask):
                     y_excl = excluded_df["flux"].values[mask]
-                    err_excl = excluded_df["rms"].values[mask]
-                    
-                    det_mask = (y_excl > 0) & ((y_excl / err_excl) > 3)
-                    
-                    y_all.extend(y_excl[det_mask])
-                    y_all.extend(y_excl[y_excl > 0])
+                    excl_upper = sentinel_upper_rows(excluded_df[mask])
+                    y_all.extend(y_excl[positive_mask(y_excl)])
+                    y_all.extend(3.0 * np.abs(excl_upper["rms"].values))
         
         y_all = np.array(y_all)
+        y_all = y_all[positive_mask(y_all)]
         if len(y_all) == 0:
             continue
         
