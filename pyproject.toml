@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grbfit"
+version = "0.1.0"
+description = "GRB afterglow fitting with MCMC"
+authors = [{ name = "Your Name" }]
+readme = "README.md"
+requires-python = ">=3.9"
+
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "pandas",
+    "emcee",
+    "corner",
+    "pyyaml"
+]
+
+# 🚀 CLI entry point
+[project.scripts]
+grbfit = "grbfit.run:main"
+
+# 📦 Tell setuptools where your package lives
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# 📄 Include non-Python files inside package
+[tool.setuptools.package-data]
+grbfit = ["config_template.yaml"]
