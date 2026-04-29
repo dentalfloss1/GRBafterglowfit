@@ -7,16 +7,23 @@ def build_param_vector(cfg):
     model_type = cfg["model"]["type"]
 
     if model_type == "forward_only":
-        keys = ["f0", "nua_0", "num_0", "nuc_0"]
+        model_keys = ["f0", "nua_0", "num_0", "nuc_0"]
     else:
-        keys = ["f0", "f0_rev", "nua0_rev", "nua_0", "num_0", "nuc_0"]
+        model_keys = [
+            "f0",
+            "f0_rev",
+            "nua0_rev",
+            "num0_rev",
+            "nuc0_rev",
+            "nua_0",
+            "num_0",
+            "nuc_0",
+        ]
 
     tj = cfg["fit"]["initial_guess"].get("t_j", None)
     
     if tj is not None:
-        keys.append("t_j")
-
-    cfg["fit"]["param_keys"] = keys
+        model_keys.append("t_j")
 
     if tj is not None and "t_j" not in cfg["fit"]["bounds"]:
         raise ValueError(
@@ -25,6 +32,22 @@ def build_param_vector(cfg):
         "  bounds:\n"
         "    t_j: [min, max]"
         )
+
+    keys = []
+    fixed_params = {}
+    for key in model_keys:
+        if key not in cfg["fit"]["bounds"]:
+            raise ValueError(f"❌ Missing bounds for fit parameter '{key}'")
+
+        low = float(cfg["fit"]["bounds"][key][0])
+        high = float(cfg["fit"]["bounds"][key][1])
+        if high == low:
+            fixed_params[key] = float(cfg["fit"]["initial_guess"][key])
+        else:
+            keys.append(key)
+
+    cfg["fit"]["param_keys"] = keys
+    cfg["fit"]["fixed_params"] = fixed_params
 
     # 🔢 build p0
     p0 = np.array([
@@ -50,7 +73,10 @@ def make_model(cfg):
 
     if cfg["model"]["type"] == "forward_only":
         def model(theta, ivar):
-            params = dict(zip(cfg["fit"]["param_keys"], theta))
+            params = {
+                **cfg["fit"].get("fixed_params", {}),
+                **dict(zip(cfg["fit"]["param_keys"], theta)),
+            }
             return forward_model(
                                  ivar,
                                  params["f0"],
@@ -65,13 +91,18 @@ def make_model(cfg):
 
     else:
         def model(theta, ivar):
-            params = dict(zip(cfg["fit"]["param_keys"], theta))
+            params = {
+                **cfg["fit"].get("fixed_params", {}),
+                **dict(zip(cfg["fit"]["param_keys"], theta)),
+            }
         
             return forward_reverse_model(
                 ivar,
                 params["f0"],
                 params["f0_rev"],
                 params["nua0_rev"],
+                params["num0_rev"],
+                params["nuc0_rev"],
                 params["nua_0"],
                 params["num_0"],
                 params["nuc_0"],
@@ -128,6 +159,8 @@ def run_mcmc(cfg, xdata, ydata, yerr, nwalkers=32, nsteps=2000):
     model = make_model(cfg)
 
     ndim = len(p0)
+    if ndim == 0:
+        raise ValueError("❌ All fit parameters are fixed; at least one parameter must have non-equal bounds for MCMC.")
 
     pos = []
     for _ in range(nwalkers):

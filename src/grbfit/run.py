@@ -1,4 +1,5 @@
 import yaml  # 📄 config loader
+from importlib import resources
 import numpy as np  # 🔢 math engine
 import matplotlib.pyplot as plt  # 📊 plotting
 import matplotlib.cm as cm
@@ -13,7 +14,10 @@ import pandas as pd
 def create_template_config(path="config.yaml"):
     print("📝 No config.yaml found — creating template...")
 
-    template = """# 🔧 GRB Fit Configuration File
+    try:
+        template = resources.files("grbfit").joinpath("config_template.yaml").read_text()
+    except (FileNotFoundError, ModuleNotFoundError):
+        template = """# 🔧 GRB Fit Configuration File
 
 burst:
   name: your_grb_name_here
@@ -37,18 +41,25 @@ fit:
     f0: 1e-3
     f0_rev: 5e-5
     nua0_rev: 10
+    num0_rev: 100
+    nuc0_rev: 8e8
     nua_0: 13
     num_0: 100
     nuc_0: 8e8
     t_j: null
   bounds:
+    # Set lower and upper equal to remove a parameter from fitting.
+    # The fixed value will be the corresponding initial_guess value.
     f0: [1e-6, 1]
     f0_rev: [3e-5, 1e5]
     nua0_rev: [0.1, 1e6]
+    num0_rev: [0.1, 1e6]
+    nuc0_rev: [1e8, 2e9]
     nua_0: [6, 15]
     num_0: [33, 1e4]
     nuc_0: [1e8, 2e9]
-  max_rest_freq: 2.47e6 # GHz, FUV in rest frame, only used in z is defined. 
+    t_j: [1, 1]
+  max_rest_freq: 2.47e6 # GHz, FUV in rest frame, only used in z is defined.
   fit_xrt: false
 """
 
@@ -171,6 +182,8 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
         return y_upper
     
     param_keys = cfg["fit"]["param_keys"]
+    fixed_params = cfg["fit"].get("fixed_params", {})
+    t_j_median = fixed_params.get("t_j")
     
     if "t_j" in param_keys:
         tj_index = param_keys.index("t_j")

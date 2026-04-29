@@ -229,12 +229,9 @@ def theory_bigsbpl(ivar, f0, nu0_1, nu0_2,nu0_3, k, t0,jet_break=None, p=2.2):
 
 
 # Relativistic Rev. Shock
-def reverse_shock(ivar, f0, nu0_1, k, t0_rev,p=2.2,givenuvals=False):
+def reverse_shock(ivar, f0, nu0_1, nu0_2, nu0_3, k, t0_rev,p=2.2,givenuvals=False):
     t, nu = ivar
     res = []
-    t0_rev=0.05
-    nu0_2 = 1e12
-    nu0_3 = 1e18
     a1 = -(47-10*k)/(12*(4-k))
     b1 = -(32-7*k)/(15*(4-k))
     b2 = -(73-14*k)/(12*(4-k))
@@ -277,10 +274,10 @@ def forward_model(ivar, f0, nua_0, num_0, nuc_0, k, t0, p, t_j=None):
 def forward_reverse_model(
     ivar,
     f0, f0_rev,
-    nua0_rev,
+    nua0_rev, num0_rev, nuc0_rev,
     nua_0, num_0, nuc_0,
     k, t0, t0_rev, p, t_j=None
 ):
     fwd = theory_bigsbpl(ivar, f0, nua_0, num_0, nuc_0, k, t0, jet_break=t_j, p=p)
-    rev = reverse_shock(ivar, f0_rev, nua0_rev, k, t0_rev, p)
+    rev = reverse_shock(ivar, f0_rev, nua0_rev, num0_rev, nuc0_rev, k, t0_rev, p)
     return fwd + rev
