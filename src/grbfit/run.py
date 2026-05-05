@@ -78,6 +78,76 @@ def summarize_chain(samples, keys):
         print(f"{k} = {mcmc[1]:.4e} +{q[1]:.4e} -{q[0]:.4e}")
 
 
+def format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr):
+    theta = np.median(samples, axis=0)
+    model = make_model(cfg)
+    model_vals = model(theta, xdata)
+    eps = 1e-30
+
+    valid = (
+        np.isfinite(ydata)
+        & np.isfinite(yerr)
+        & np.isfinite(model_vals)
+        & (ydata > 0)
+        & (yerr > 0)
+        & (model_vals > 0)
+    )
+
+    ndata = int(np.sum(valid))
+    nfit = len(cfg["fit"]["param_keys"])
+
+    lines = [
+        "=== GOODNESS OF FIT ===",
+        f"Data points used: {ndata}",
+        f"Fitted parameters: {nfit}",
+    ]
+
+    dof = ndata - nfit
+    lines.append(f"Degrees of freedom: {ndata} - {nfit} = {dof}")
+
+    if ndata == 0:
+        lines.extend([
+            "Chi-square: nan",
+            "Reduced chi-square: nan",
+            "AIC: nan",
+            "BIC: nan",
+        ])
+        return "\n".join(lines)
+
+    log_data = np.log10(ydata[valid] + eps)
+    log_model = np.log10(model_vals[valid] + eps)
+    log_err = yerr[valid] / (ydata[valid] + eps)
+    chi_square = np.sum(((log_data - log_model) / log_err) ** 2)
+
+    reduced_chi_square = chi_square / dof if dof > 0 else np.nan
+    aic = chi_square + 2 * nfit
+    bic = chi_square + nfit * np.log(ndata)
+
+    lines.extend([
+        f"Chi-square: {chi_square:.6g}",
+        f"Reduced chi-square: {reduced_chi_square:.6g}",
+        f"AIC: {aic:.6g}",
+        f"BIC: {bic:.6g}",
+    ])
+    return "\n".join(lines)
+
+
+def print_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr):
+    report = format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr)
+    print(f"\n{report}")
+    return report
+
+
+def write_fit_report(cfg, goodness_of_fit_report, path="fitreport.txt"):
+    with open(path, "w") as f:
+        f.write("=== CONFIGURATION ===\n")
+        f.write(yaml.safe_dump(cfg, sort_keys=False))
+        f.write("\n")
+        f.write(goodness_of_fit_report)
+        f.write("\n")
+    print(f"✅ Fit report saved to {path}")
+
+
 # 🔺 Corner plot (parameter correlations + constraints)
 def plot_corner(samples, keys):
     print("📈 Generating corner plot...")
@@ -585,12 +655,14 @@ def main():
 
     # 🧠 summarize posterior
     summarize_chain(flat_samples, keys)
+    goodness_of_fit_report = print_goodness_of_fit_report(cfg, flat_samples, xdata, ydata, yerr)
 
     # 🔺 corner plot
     plot_corner(flat_samples, keys)
 
     # 🍝 posterior predictive plot
     plot_posterior_models(cfg, flat_samples, xdata, ydata, yerr, upper_df, excluded_df, instrument)
+    write_fit_report(cfg, goodness_of_fit_report)
 
     print("🎉 All done!")
 
