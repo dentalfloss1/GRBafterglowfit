@@ -149,9 +149,39 @@ def write_fit_report(cfg, goodness_of_fit_report, path="fitreport.txt"):
 
 
 # 🔺 Corner plot (parameter correlations + constraints)
+CORNER_LABELS = {
+    "f0": r"$F_0$",
+    "f0_rev": r"$F_{0,\mathrm{rev}}$",
+    "nua0_rev": r"$\nu_{a,0,\mathrm{rev}}$",
+    "num0_rev": r"$\nu_{m,0,\mathrm{rev}}$",
+    "nuc0_rev": r"$\nu_{c,0,\mathrm{rev}}$",
+    "nua_0": r"$\nu_{a,0}$",
+    "num_0": r"$\nu_{m,0}$",
+    "nuc_0": r"$\nu_{c,0}$",
+    "t_j": r"$t_j$",
+}
+
+
 def plot_corner(samples, keys):
     print("📈 Generating corner plot...")
-    fig = corner.corner(samples, labels=keys, show_titles=True, title_fmt=".2e")
+    labels = [CORNER_LABELS.get(key, key) for key in keys]
+    fig = corner.corner(
+        samples,
+        labels=labels,
+        show_titles=False,
+        label_kwargs={"fontsize": 14},
+    )
+
+    ndim = len(keys)
+    axes = np.array(fig.axes).reshape((ndim, ndim))
+    quantiles = np.percentile(samples, [16, 50, 84], axis=0)
+    for i in range(ndim):
+        lower, median, upper = quantiles[:, i]
+        plus = upper - median
+        minus = median - lower
+        title = rf"${median:.2e}^{{+{plus:.2e}}}_{{-{minus:.2e}}}$"
+        axes[i, i].set_title(title, fontsize=12)
+
     plt.savefig("corner.png", dpi=200)  # 💾 save plot
     plt.close()
     print("✅ corner.png saved")
