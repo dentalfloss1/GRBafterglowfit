@@ -10,6 +10,7 @@ from grbfit.fit import run_mcmc, make_model  # 🔧 fitting machinery
 import os  # 📂 file system checks
 import sys  # 🚪 clean exit
 import pandas as pd
+import csv
 
 def create_template_config(path="config.yaml"):
     print("📝 No config.yaml found — creating template...")
@@ -78,7 +79,7 @@ def summarize_chain(samples, keys):
         print(f"{k} = {mcmc[1]:.4e} +{q[1]:.4e} -{q[0]:.4e}")
 
 
-def format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr):
+def calculate_goodness_of_fit(cfg, samples, xdata, ydata, yerr):
     theta = np.median(samples, axis=0)
     model = make_model(cfg)
     model_vals = model(theta, xdata)
@@ -95,17 +96,46 @@ def format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr):
 
     ndata = int(np.sum(valid))
     nfit = len(cfg["fit"]["param_keys"])
+    dof = ndata - nfit
+
+    metrics = {
+        "ndata": ndata,
+        "nfit": nfit,
+        "DOF": dof,
+        "chisq": np.nan,
+        "redchisq": np.nan,
+        "AIC": np.nan,
+        "BIC": np.nan,
+    }
+
+    if ndata == 0:
+        return metrics
+
+    log_data = np.log10(ydata[valid] + eps)
+    log_model = np.log10(model_vals[valid] + eps)
+    log_err = yerr[valid] / (ydata[valid] + eps)
+    chi_square = np.sum(((log_data - log_model) / log_err) ** 2)
+
+    metrics["chisq"] = chi_square
+    metrics["redchisq"] = chi_square / dof if dof > 0 else np.nan
+    metrics["AIC"] = chi_square + 2 * nfit
+    metrics["BIC"] = chi_square + nfit * np.log(ndata)
+    return metrics
+
+
+def format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr, metrics=None):
+    if metrics is None:
+        metrics = calculate_goodness_of_fit(cfg, samples, xdata, ydata, yerr)
 
     lines = [
         "=== GOODNESS OF FIT ===",
-        f"Data points used: {ndata}",
-        f"Fitted parameters: {nfit}",
+        f"Data points used: {metrics['ndata']}",
+        f"Fitted parameters: {metrics['nfit']}",
     ]
 
-    dof = ndata - nfit
-    lines.append(f"Degrees of freedom: {ndata} - {nfit} = {dof}")
+    lines.append(f"Degrees of freedom: {metrics['ndata']} - {metrics['nfit']} = {metrics['DOF']}")
 
-    if ndata == 0:
+    if metrics["ndata"] == 0:
         lines.extend([
             "Chi-square: nan",
             "Reduced chi-square: nan",
@@ -114,26 +144,17 @@ def format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr):
         ])
         return "\n".join(lines)
 
-    log_data = np.log10(ydata[valid] + eps)
-    log_model = np.log10(model_vals[valid] + eps)
-    log_err = yerr[valid] / (ydata[valid] + eps)
-    chi_square = np.sum(((log_data - log_model) / log_err) ** 2)
-
-    reduced_chi_square = chi_square / dof if dof > 0 else np.nan
-    aic = chi_square + 2 * nfit
-    bic = chi_square + nfit * np.log(ndata)
-
     lines.extend([
-        f"Chi-square: {chi_square:.6g}",
-        f"Reduced chi-square: {reduced_chi_square:.6g}",
-        f"AIC: {aic:.6g}",
-        f"BIC: {bic:.6g}",
+        f"Chi-square: {metrics['chisq']:.6g}",
+        f"Reduced chi-square: {metrics['redchisq']:.6g}",
+        f"AIC: {metrics['AIC']:.6g}",
+        f"BIC: {metrics['BIC']:.6g}",
     ])
     return "\n".join(lines)
 
 
-def print_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr):
-    report = format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr)
+def print_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr, metrics=None):
+    report = format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr, metrics)
     print(f"\n{report}")
     return report
 
@@ -146,6 +167,59 @@ def write_fit_report(cfg, goodness_of_fit_report, path="fitreport.txt"):
         f.write(goodness_of_fit_report)
         f.write("\n")
     print(f"✅ Fit report saved to {path}")
+
+
+STANDARD_OUTPUT_PARAMETERS = [
+    ("f0", "F0"),
+    ("nua_0", "nua"),
+    ("num_0", "num"),
+    ("nuc_0", "nuc"),
+    ("f0_rev", "F0_rev"),
+    ("nua0_rev", "nua_rev"),
+    ("num0_rev", "num_rev"),
+    ("nuc0_rev", "nuc_rev"),
+]
+
+
+def summarize_output_parameter(cfg, samples, key):
+    param_keys = cfg["fit"]["param_keys"]
+    if key in param_keys:
+        sample_values = samples[:, param_keys.index(key)]
+        lower, median, upper = np.percentile(sample_values, [16, 50, 84])
+        return median, median - lower, upper - median
+
+    fixed_params = cfg["fit"].get("fixed_params", {})
+    initial_guess = cfg["fit"].get("initial_guess", {})
+    value = fixed_params.get(key, initial_guess.get(key, np.nan))
+    return value, -1, -1
+
+
+def write_standardized_fit_csv(cfg, samples, goodness_metrics, path="fit_summary.csv"):
+    fieldnames = ["GRBname"]
+    row = {"GRBname": cfg["burst"].get("name", "")}
+
+    for key, label in STANDARD_OUTPUT_PARAMETERS:
+        value, errneg, errpos = summarize_output_parameter(cfg, samples, key)
+        fieldnames.extend([label, f"{label}errneg", f"{label}errpos"])
+        row[label] = value
+        row[f"{label}errneg"] = errneg
+        row[f"{label}errpos"] = errpos
+
+    t_j, t_jerrneg, t_jerrpos = summarize_output_parameter(cfg, samples, "t_j")
+    fieldnames.extend(["t_j", "t_jerrneg", "t_jerrpos", "redchisq", "DOF", "AIC", "BIC"])
+    row["t_j"] = t_j
+    row["t_jerrneg"] = t_jerrneg
+    row["t_jerrpos"] = t_jerrpos
+    row["redchisq"] = goodness_metrics["redchisq"]
+    row["DOF"] = goodness_metrics["DOF"]
+    row["AIC"] = goodness_metrics["AIC"]
+    row["BIC"] = goodness_metrics["BIC"]
+
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow(row)
+    print(f"✅ Standardized fit CSV saved to {path}")
 
 
 # 🔺 Corner plot (parameter correlations + constraints)
@@ -685,7 +759,15 @@ def main():
 
     # 🧠 summarize posterior
     summarize_chain(flat_samples, keys)
-    goodness_of_fit_report = print_goodness_of_fit_report(cfg, flat_samples, xdata, ydata, yerr)
+    goodness_metrics = calculate_goodness_of_fit(cfg, flat_samples, xdata, ydata, yerr)
+    goodness_of_fit_report = print_goodness_of_fit_report(
+        cfg,
+        flat_samples,
+        xdata,
+        ydata,
+        yerr,
+        goodness_metrics,
+    )
 
     # 🔺 corner plot
     plot_corner(flat_samples, keys)
@@ -693,6 +775,7 @@ def main():
     # 🍝 posterior predictive plot
     plot_posterior_models(cfg, flat_samples, xdata, ydata, yerr, upper_df, excluded_df, instrument)
     write_fit_report(cfg, goodness_of_fit_report)
+    write_standardized_fit_csv(cfg, flat_samples, goodness_metrics)
 
     print("🎉 All done!")
 
