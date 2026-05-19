@@ -10,7 +10,10 @@ burst:
 data:
   radio_file: grbmeas.csv
   other_file: otherdata.txt
-  batxrt_file: batxrt.txt
+  batxrt_file: null
+  xrt_photon_index: null
+  # Unabsorbed flux / observed flux from the XRT spectrum.
+  absorption_ratio: null
 
 model:
   type: forward_only   # options: forward_only, forward_reverse

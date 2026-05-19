@@ -1,65 +1,129 @@
 import pandas as pd
 import numpy as np
 
-def load_swift_data(filepath):
-    import numpy as np
+SECONDS_PER_DAY = 24 * 60 * 60
+KEV_TO_HZ = 2.417989242e17
+JY_IN_CGS = 1e-23
+XRT_NU_LOWER_HZ = 0.3 * KEV_TO_HZ
+XRT_NU_UPPER_HZ = 10.0 * KEV_TO_HZ
+XRT_CENTER_FREQ_GHZ = np.sqrt(XRT_NU_LOWER_HZ * XRT_NU_UPPER_HZ) * 1e-9
+SWIFT_COLUMNS = ["obsdate", "freq", "flux", "err", "rms", "instrument"]
+
+
+def _xrt_band_flux_to_fnu(band_flux, beta):
+    """Convert integrated 0.3-10 keV flux to F_nu at the geometric band center."""
+    nu_lower = XRT_NU_LOWER_HZ
+    nu_upper = XRT_NU_UPPER_HZ
+
+    if np.isclose(beta, 1.0):
+        return (
+            band_flux
+            / np.sqrt(nu_lower * nu_upper)
+            / np.log(nu_upper / nu_lower)
+        )
+
+    if beta > 1.0:
+        denominator = 1.0 - (nu_upper / nu_lower) ** (-(beta - 1.0))
+        return (
+            ((beta - 1.0) * band_flux / nu_lower)
+            * (nu_lower / nu_upper) ** (beta / 2.0)
+            / denominator
+        )
+
+    denominator = 1.0 - (nu_lower / nu_upper) ** (1.0 - beta)
+    return (
+        ((1.0 - beta) * band_flux / nu_upper)
+        * (nu_upper / nu_lower) ** (beta / 2.0)
+        / denominator
+    )
+
+
+def _xrt_band_flux_to_microjy(band_flux, beta, absorption_ratio):
+    # absorption_ratio is unabsorbed flux / observed flux from the XRT spectrum.
+    corrected_band_flux = band_flux * absorption_ratio
+    fnu_cgs = _xrt_band_flux_to_fnu(corrected_band_flux, beta)
+    return (fnu_cgs / JY_IN_CGS) * 1e6
+
+
+def load_swift_data(filepath, xrt_photon_index, absorption_ratio):
+    if xrt_photon_index is None:
+        raise ValueError("xrt_photon_index is required when loading XRT data.")
+    if absorption_ratio is None:
+        raise ValueError("absorption_ratio is required when loading XRT data.")
 
     data = []
+    beta = float(xrt_photon_index) - 1.0
+    absorption_ratio = float(absorption_ratio)
 
-    kev_to_hz = 2.418e17
-    nu_ref = 10 * kev_to_hz  # 10 keV
-    nu_ref = nu_ref*1e-9
-    store = False
-    current_instrument = None
+    if absorption_ratio <= 0:
+        raise ValueError("data.absorption_ratio must be greater than 0.")
+
+    reading_pc = False
 
     with open(filepath, "r") as file:
-        for line in file:
-            line = line.strip()
+        for line_number, raw_line in enumerate(file, start=1):
+            line = raw_line.strip()
             if not line:
                 continue
-            if line.upper().startswith("NO") or line.upper().startswith("READ"):
-                continue
-            if line.startswith("!"):
-                header = line.strip().lower()
 
-                if "flux" in header:
-                    if "incbad" in header:
-                        isbad = True
-                    else:
-                        isbad = False
-                    store = True
+            line_upper = line.upper()
 
-                    if "bat" in header:
-                        current_instrument = "BAT"
-                    elif "xrt" in header:
-                        current_instrument = "XRT"
-                    else:
-                        current_instrument = None
-                else:
-                    store = False
-                    current_instrument = None
-
+            if not reading_pc:
+                if line.startswith("!") and line[1:].strip().lower() == "pc_incbad":
+                    reading_pc = True
                 continue
 
-            if store and current_instrument:
+            if line.startswith("!") or line_upper.startswith("NO"):
+                break
+
+            if line_upper.startswith("READ"):
+                continue
+
+            try:
                 values = list(map(float, line.split()))
+                time = values[0] / SECONDS_PER_DAY
+                band_flux = values[3]
+                err_plus = values[4]
+                err_minus = abs(values[5])
+            except (ValueError, IndexError) as exc:
+                raise ValueError(
+                    f"Could not parse XRT data line {line_number} in {filepath!r}; "
+                    "expected at least 6 numeric columns."
+                ) from exc
 
-                time = values[0]/24/60/60
-                flux = values[3]*1e6
-                err_plus = values[4]*1e6
-                err_minus = abs(values[5])*1e6
+            flux = _xrt_band_flux_to_microjy(band_flux, beta, absorption_ratio)
+            err = 0.5 * (
+                _xrt_band_flux_to_microjy(abs(err_plus), beta, absorption_ratio)
+                + _xrt_band_flux_to_microjy(err_minus, beta, absorption_ratio)
+            )
 
-                err = 0.5 * (err_plus + err_minus)
-                if (not isbad) or (time not in [ d["obsdate"] for d in data]):
-                    data.append({
-                        "obsdate": time,
-                        "freq": nu_ref,
-                        "flux": flux,
-                        "err": err,
-                        "rms": 0.1*flux,
-                        "instrument": current_instrument
-                    })
-    return pd.DataFrame(data)
+            data.append({
+                "obsdate": time,
+                "freq": XRT_CENTER_FREQ_GHZ,
+                "flux": flux,
+                "err": err,
+                "rms": 0.1 * abs(flux),
+                "instrument": "XRT",
+            })
+
+    return pd.DataFrame(data, columns=SWIFT_COLUMNS)
+
+
+def _require_xrt_config(cfg):
+    missing = []
+
+    if cfg["data"].get("xrt_photon_index") is None:
+        missing.append("data.xrt_photon_index")
+
+    if cfg["data"].get("absorption_ratio") is None:
+        missing.append("data.absorption_ratio")
+
+    if missing:
+        raise ValueError(
+            "An XRT data file was provided, so config.yaml must also define "
+            f"{' and '.join(missing)}."
+        )
+
 
 def load_data(cfg):
 
@@ -80,8 +144,13 @@ def load_data(cfg):
 
     # 🔥 NEW: Swift support
     if "batxrt_file" in cfg["data"] and cfg["data"]["batxrt_file"] is not None:
+        _require_xrt_config(cfg)
         try:
-            swift_df = load_swift_data(cfg["data"]["batxrt_file"])
+            swift_df = load_swift_data(
+                cfg["data"]["batxrt_file"],
+                cfg["data"]["xrt_photon_index"],
+                cfg["data"]["absorption_ratio"],
+            )
             dfs.append(swift_df)
         except FileNotFoundError:
             print(f"⚠️ Warning: {cfg['data']['batxrt_file']} not found, skipping")
@@ -120,7 +189,7 @@ def prepare_fit_data(df, cfg):
         else:
             fitdata = fitdata[
                 ((fitdata["freq_rest"] < cfg["fit"]["max_rest_freq"]) |
-                (fitdata["freq"] > 1e9)) # Include the x-ray data
+                (fitdata["instrument"] == "XRT")) # Include the x-ray data
                 & (fitdata["obsdate"] > cfg["burst"]["fitstart"])
             ]
     print("Total points:", len(df))
@@ -147,6 +216,3 @@ def prepare_fit_data(df, cfg):
     # 👉 NEW: identify excluded points
     excluded = df.loc[~df.index.isin(fitdata.index)]
     return (t, nu), y, yerr, upper, excluded, instrument_det
-
-
-

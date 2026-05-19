@@ -30,7 +30,10 @@ burst:
 data:
   radio_file: grbmeas.csv
   other_file: otherdata.txt
-  batxrt_file: batxrt.txt
+  batxrt_file: null
+  xrt_photon_index: null
+  # Unabsorbed flux / observed flux from the XRT spectrum.
+  absorption_ratio: null
 
 model:
   type: forward_only   # options: forward_only, forward_reverse
@@ -711,6 +714,10 @@ def normalize_config(cfg):
     cfg["fit"]["max_rest_freq"] = float(cfg["fit"]["max_rest_freq"])
     
     cfg["fit"]["fit_xrt"] = bool(cfg["fit"].get("fit_xrt",False))
+
+    for key in ("xrt_photon_index", "absorption_ratio"):
+        if key in cfg["data"] and cfg["data"][key] is not None:
+            cfg["data"][key] = float(cfg["data"][key])
 
     # 🔢 initial guesses
     for k, v in cfg["fit"]["initial_guess"].items():
