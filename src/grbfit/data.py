@@ -7,6 +7,7 @@ JY_IN_CGS = 1e-23
 XRT_NU_LOWER_HZ = 0.3 * KEV_TO_HZ
 XRT_NU_UPPER_HZ = 10.0 * KEV_TO_HZ
 XRT_CENTER_FREQ_GHZ = np.sqrt(XRT_NU_LOWER_HZ * XRT_NU_UPPER_HZ) * 1e-9
+X_RAY_MIN_FREQ_GHZ = XRT_NU_LOWER_HZ * 1e-9
 SWIFT_COLUMNS = ["obsdate", "freq", "flux", "err", "rms", "instrument"]
 
 
@@ -189,7 +190,7 @@ def prepare_fit_data(df, cfg):
         else:
             fitdata = fitdata[
                 ((fitdata["freq_rest"] < cfg["fit"]["max_rest_freq"]) |
-                (fitdata["instrument"] == "XRT")) # Include the x-ray data
+                (fitdata["freq"] >= X_RAY_MIN_FREQ_GHZ)) # Include the x-ray data
                 & (fitdata["obsdate"] > cfg["burst"]["fitstart"])
             ]
     print("Total points:", len(df))
