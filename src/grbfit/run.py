@@ -262,7 +262,7 @@ def _format_physical_title(value):
     return f"{value:.2e}"
 
 
-def _log_tick_values(values):
+def _log_tick_values(values, max_ticks=3):
     values = np.asarray(values)
     values = values[np.isfinite(values) & (values > 0)]
     if len(values) == 0:
@@ -273,18 +273,31 @@ def _log_tick_values(values):
     if not np.isfinite(lo) or not np.isfinite(hi) or lo <= 0 or hi <= 0:
         return []
 
-    min_exp = int(np.floor(np.log10(lo)))
-    max_exp = int(np.ceil(np.log10(hi)))
-    ticks = []
-    for exp in range(min_exp, max_exp + 1):
-        for mantissa in (1, 2, 5):
-            tick = mantissa * 10 ** exp
-            if lo <= tick <= hi:
-                ticks.append(tick)
+    log_lo = np.log10(lo)
+    log_hi = np.log10(hi)
+    if np.isclose(log_lo, log_hi):
+        return [lo]
+
+    tick_logs = np.linspace(log_lo, log_hi, max_ticks)
+    ticks = [10 ** tick_log for tick_log in tick_logs]
 
     if not ticks:
         ticks = [lo, hi]
     return ticks
+
+
+def _hide_inner_corner_ticks(axes):
+    ndim = axes.shape[0]
+    for row in range(ndim):
+        for col in range(ndim):
+            ax = axes[row, col]
+            if col > row:
+                continue
+
+            if row < ndim - 1:
+                ax.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
+            if col > 0:
+                ax.tick_params(axis="y", which="both", left=False, labelleft=False)
 
 
 def _apply_physical_log_ticks(axes, samples, keys):
@@ -295,12 +308,12 @@ def _apply_physical_log_ticks(axes, samples, keys):
             if col > row:
                 continue
 
-            if uses_log10_sampling(keys[col]):
+            if row == ndim - 1 and uses_log10_sampling(keys[col]):
                 ticks = _log_tick_values(samples[:, col])
                 ax.set_xticks(np.log10(ticks))
                 ax.set_xticklabels([_format_physical_tick(t) for t in ticks])
 
-            if row != col and uses_log10_sampling(keys[row]):
+            if col == 0 and row != col and uses_log10_sampling(keys[row]):
                 ticks = _log_tick_values(samples[:, row])
                 ax.set_yticks(np.log10(ticks))
                 ax.set_yticklabels([_format_physical_tick(t) for t in ticks])
@@ -319,11 +332,13 @@ def plot_corner(samples, keys):
         labels=labels,
         show_titles=False,
         label_kwargs={"fontsize": 14},
+        max_n_ticks=3,
     )
 
     ndim = len(keys)
     axes = np.array(fig.axes).reshape((ndim, ndim))
     _apply_physical_log_ticks(axes, samples, keys)
+    _hide_inner_corner_ticks(axes)
     quantiles = np.percentile(samples, [16, 50, 84], axis=0)
     for i in range(ndim):
         lower, median, upper = quantiles[:, i]
@@ -336,6 +351,7 @@ def plot_corner(samples, keys):
         )
         axes[i, i].set_title(title, fontsize=12)
 
+    fig.subplots_adjust(wspace=0, hspace=0)
     plt.savefig("corner.png", dpi=200)  # 💾 save plot
     plt.close()
     print("✅ corner.png saved")
@@ -529,14 +545,18 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
                 excl_mask = (excluded_df["freq"] == freq)
                 excl_subset = excluded_df[excl_mask]
             
+            has_upper = upper_df is not None and len(upper_df[upper_df["freq"] == freq]) > 0
             has_excluded = len(excl_subset) > 0
             has_detection = len(t_data) > 0
             if has_detection:
                 label = label_helper(freq)
             elif has_excluded:
                 label = label_helper(freq) + " (excluded)"
+            elif has_upper:
+                label = label_helper(freq) + " (upper limit)"
             else:
                 label = None
+            model_label = label if has_upper and not has_detection and not has_excluded else None
             if len(t_data) > 0: 
                 # 📡 data
                 ax.errorbar(
@@ -618,7 +638,8 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
                 t_line[med_ok],
                 y_med[med_ok],
                 color=color,
-                linewidth=2.5
+                linewidth=2.5,
+                label=model_label
             )
             # 📡 XRT data (instrument-based, ignore frequency grouping)
             xrt_mask = (instrument == "XRT") & (nu == freq)
@@ -680,7 +701,7 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
                             t_upper,
                             y_upper * 1e6,   # back to μJy for plotting
                             marker="v",
-                            color="gray",
+                            color=color,
                             s=40,
                             alpha=0.8,
                             label=None  # avoid cluttering legend
@@ -691,7 +712,7 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
                             ax.plot(
                                 [tu, tu],
                                 [yu * 0.5, yu],
-                                color="gray",
+                                color=color,
                                 alpha=0.6,
                                 linewidth=1
                             )
