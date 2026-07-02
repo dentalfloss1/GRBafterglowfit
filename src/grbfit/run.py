@@ -244,15 +244,6 @@ CORNER_LABELS = {
 }
 
 
-def _format_physical_tick(value):
-    if value == 0:
-        return "0"
-    abs_value = abs(value)
-    if 1e-2 <= abs_value < 1e4:
-        return f"{value:.2g}"
-    return f"{value:.0e}"
-
-
 def _format_physical_title(value):
     if value == 0:
         return "0"
@@ -262,38 +253,13 @@ def _format_physical_title(value):
     return f"{value:.2e}"
 
 
-def _log_tick_values(values, max_ticks=2):
-    values = np.asarray(values)
-    values = values[np.isfinite(values) & (values > 0)]
-    if len(values) == 0:
-        return []
+def _corner_label(key):
+    label = CORNER_LABELS.get(key, key)
+    if not uses_log10_sampling(key):
+        return label
 
-    lo = np.nanpercentile(values, 0.5)
-    hi = np.nanpercentile(values, 99.5)
-    if not np.isfinite(lo) or not np.isfinite(hi) or lo <= 0 or hi <= 0:
-        return []
-
-    min_exp = int(np.floor(np.log10(lo)))
-    max_exp = int(np.ceil(np.log10(hi)))
-    ticks = []
-    for exp in range(min_exp, max_exp + 1):
-        for mantissa in (1, 2, 5):
-            tick = mantissa * 10 ** exp
-            if lo <= tick <= hi:
-                ticks.append(tick)
-
-    if len(ticks) > max_ticks:
-        target_logs = np.linspace(np.log10(lo), np.log10(hi), max_ticks + 2)[1:-1]
-        selected = []
-        for target_log in target_logs:
-            tick = min(ticks, key=lambda value: abs(np.log10(value) - target_log))
-            if tick not in selected:
-                selected.append(tick)
-        ticks = selected
-
-    if not ticks:
-        ticks = [10 ** round(np.log10(np.nanmedian(values)))]
-    return ticks
+    inner = label[1:-1] if label.startswith("$") and label.endswith("$") else label
+    return rf"$\log_{{10}}({inner})$"
 
 
 def _hide_inner_corner_ticks(axes):
@@ -325,28 +291,26 @@ def _hide_inner_corner_ticks(axes):
                 )
 
 
-def _apply_physical_log_ticks(axes, samples, keys):
-    ndim = len(keys)
-    for row in range(ndim):
-        for col in range(ndim):
-            ax = axes[row, col]
-            if col > row:
-                continue
+def _limit_outer_corner_ticks(axes, max_ticks=3):
+    ndim = axes.shape[0]
+    for col in range(ndim):
+        ax = axes[ndim - 1, col]
+        ticks = ax.get_xticks()
+        if len(ticks) > max_ticks:
+            keep = np.unique(np.linspace(0, len(ticks) - 1, max_ticks).astype(int))
+            ax.set_xticks(ticks[keep])
 
-            if row == ndim - 1 and uses_log10_sampling(keys[col]):
-                ticks = _log_tick_values(samples[:, col])
-                ax.set_xticks(np.log10(ticks))
-                ax.set_xticklabels([_format_physical_tick(t) for t in ticks])
-
-            if col == 0 and row != col and uses_log10_sampling(keys[row]):
-                ticks = _log_tick_values(samples[:, row])
-                ax.set_yticks(np.log10(ticks))
-                ax.set_yticklabels([_format_physical_tick(t) for t in ticks])
+    for row in range(1, ndim):
+        ax = axes[row, 0]
+        ticks = ax.get_yticks()
+        if len(ticks) > max_ticks:
+            keep = np.unique(np.linspace(0, len(ticks) - 1, max_ticks).astype(int))
+            ax.set_yticks(ticks[keep])
 
 
 def plot_corner(samples, keys):
     print("📈 Generating corner plot...")
-    labels = [CORNER_LABELS.get(key, key) for key in keys]
+    labels = [_corner_label(key) for key in keys]
     plot_samples = np.array(samples, copy=True)
     for i, key in enumerate(keys):
         if uses_log10_sampling(key):
@@ -358,11 +322,12 @@ def plot_corner(samples, keys):
         show_titles=False,
         label_kwargs={"fontsize": 14},
         max_n_ticks=3,
+        top_ticks=False,
     )
 
     ndim = len(keys)
     axes = np.array(fig.axes).reshape((ndim, ndim))
-    _apply_physical_log_ticks(axes, samples, keys)
+    _limit_outer_corner_ticks(axes)
     _hide_inner_corner_ticks(axes)
     quantiles = np.percentile(samples, [16, 50, 84], axis=0)
     for i in range(ndim):

@@ -192,7 +192,10 @@ def log_likelihood(theta, model, xdata, ydata, yerr):
     log_data = np.log10(ydata + eps)
     log_model = np.log10(model_vals + eps)
     
-    log_err = yerr / (ydata + eps)  # fractional error
+    log_err = yerr / ((ydata + eps) * np.log(10))  # propagated uncertainty in log10 flux
+    if not np.all(np.isfinite(log_err)) or np.any(log_err <= 0):
+        return -np.inf
+
     log_like = -0.5 * np.sum(((log_data - log_model) / log_err) ** 2)
 
     if not np.isfinite(log_like):
