@@ -267,6 +267,43 @@ def reverse_shock(ivar, f0, nu0_1, nu0_2, nu0_3, k, t0_rev,p=2.2,givenuvals=Fals
     else:
         return np.array(res)
 
+def forward_shock_break_frequencies(ivar, nua_0, num_0, nuc_0, k, t0, p=2.2):
+    """Return FS (nu_a, nu_m, nu_c) at the requested observer times."""
+    t, _ = ivar
+    t = np.asarray(t)
+
+    b_nua_early = -3 * k / (5 * (4 - k))
+    b_num = -3 / 2
+    b_nuc = -(4 - 3 * k) / (2 * (4 - k))
+    b_nua_late = -(12 * p + 8 - 3 * p * k + 2 * k) / (2 * (4 - k) * (p + 4))
+
+    t_cross = t0 * (num_0 / nua_0) ** (1 / (b_nua_early - b_num))
+    nu_cross = nua_0 * (t_cross / t0) ** b_nua_early
+
+    nua_early = nua_0 * (t / t0) ** b_nua_early
+    num = num_0 * (t / t0) ** b_num
+    nuc = nuc_0 * (t / t0) ** b_nuc
+    nua_late = nu_cross * (t / t_cross) ** b_nua_late
+    nua = np.where(t <= t_cross, nua_early, nua_late)
+
+    return nua, num, nuc
+
+
+def forward_shock_absorption_tau(ivar, nua_0, num_0, nuc_0, k, t0, p=2.2):
+    """FS optical depth for RS photons from McMahon, Kumar & Piran 2006 Eq. 14."""
+    _, nu = ivar
+    nu = np.asarray(nu)
+    nua, num, nuc = forward_shock_break_frequencies(
+        ivar, nua_0, num_0, nuc_0, k, t0, p=p
+    )
+    below_lower_fs_break = nu < np.minimum(nuc, num)
+    return np.where(
+        below_lower_fs_break,
+        (nu / nua) ** (5 / 3),
+        (nu / nua) ** (-(p + 4) / 2),
+    )
+
+
 def forward_model(ivar, f0, nua_0, num_0, nuc_0, k, t0, p, t_j=None):
     return theory_bigsbpl(ivar, f0, nua_0, num_0, nuc_0, k, t0, jet_break=t_j, p=p)
 
@@ -280,4 +317,5 @@ def forward_reverse_model(
 ):
     fwd = theory_bigsbpl(ivar, f0, nua_0, num_0, nuc_0, k, t0, jet_break=t_j, p=p)
     rev = reverse_shock(ivar, f0_rev, nua0_rev, num0_rev, nuc0_rev, k, t0_rev, p)
-    return fwd + rev
+    tau_abs_fs = forward_shock_absorption_tau(ivar, nua_0, num_0, nuc_0, k, t0, p=p)
+    return fwd + rev * np.exp(-tau_abs_fs)

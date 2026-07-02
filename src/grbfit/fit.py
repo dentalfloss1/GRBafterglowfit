@@ -3,6 +3,58 @@ import emcee
 from grbfit.models import forward_model, forward_reverse_model
 
 
+LOG10_PARAMETERS = {
+    "f0",
+    "f0_rev",
+    "nua0_rev",
+    "num0_rev",
+    "nuc0_rev",
+    "nua_0",
+    "num_0",
+    "nuc_0",
+    "t_j",
+}
+
+
+def uses_log10_sampling(key):
+    return key in LOG10_PARAMETERS
+
+
+def _log10_checked(key, value):
+    value = float(value)
+    if value <= 0:
+        raise ValueError(f"Log10-sampled parameter '{key}' must be positive; got {value}")
+    return np.log10(value)
+
+
+def to_sampling_value(key, value):
+    if uses_log10_sampling(key):
+        return _log10_checked(key, value)
+    return float(value)
+
+
+def to_physical_value(key, value):
+    if uses_log10_sampling(key):
+        return 10 ** float(value)
+    return float(value)
+
+
+def theta_to_physical(theta, keys):
+    return np.array([
+        to_physical_value(key, value)
+        for key, value in zip(keys, theta)
+    ])
+
+
+def samples_to_physical(samples, keys):
+    samples = np.asarray(samples)
+    physical = np.array(samples, dtype=float, copy=True)
+    for i, key in enumerate(keys):
+        if uses_log10_sampling(key):
+            physical[:, i] = 10 ** physical[:, i]
+    return physical
+
+
 def build_param_vector(cfg):
     model_type = cfg["model"]["type"]
 
@@ -44,6 +96,9 @@ def build_param_vector(cfg):
         if high == low:
             fixed_params[key] = float(cfg["fit"]["initial_guess"][key])
         else:
+            if uses_log10_sampling(key):
+                _log10_checked(key, low)
+                _log10_checked(key, high)
             keys.append(key)
 
     cfg["fit"]["param_keys"] = keys
@@ -51,14 +106,14 @@ def build_param_vector(cfg):
 
     # 🔢 build p0
     p0 = np.array([
-        float(cfg["fit"]["initial_guess"][k])
+        to_sampling_value(k, cfg["fit"]["initial_guess"][k])
         for k in keys
     ])
 
     bounds = np.array([
         [
-            float(cfg["fit"]["bounds"][k][0]),
-            float(cfg["fit"]["bounds"][k][1]),
+            to_sampling_value(k, cfg["fit"]["bounds"][k][0]),
+            to_sampling_value(k, cfg["fit"]["bounds"][k][1]),
         ]
         for k in keys
     ])
@@ -145,11 +200,12 @@ def log_likelihood(theta, model, xdata, ydata, yerr):
     return log_like 
 
 
-def log_probability(theta, model, xdata, ydata, yerr, bounds):
+def log_probability(theta, model, keys, xdata, ydata, yerr, bounds):
     lp = log_prior(theta, bounds)
     if not np.isfinite(lp):
         return -np.inf
-    return lp + log_likelihood(theta, model, xdata, ydata, yerr)
+    physical_theta = theta_to_physical(theta, keys)
+    return lp + log_likelihood(physical_theta, model, xdata, ydata, yerr)
 
 
 # ---------- MAIN SAMPLER ----------
@@ -166,7 +222,7 @@ def run_mcmc(cfg, xdata, ydata, yerr, nwalkers=32, nsteps=2000):
     for _ in range(nwalkers):
         trial = []
         for val, (low, high) in zip(p0, bounds):
-            spread = 0.1 * val if val != 0 else 1e-6
+            spread = 0.01 * (high - low) if high != low else 1e-6
             trial.append(np.clip(val + spread * np.random.randn(), low, high))
         pos.append(trial)
     
@@ -175,7 +231,7 @@ def run_mcmc(cfg, xdata, ydata, yerr, nwalkers=32, nsteps=2000):
         nwalkers,
         ndim,
         log_probability,
-        args=(model, xdata, ydata, yerr, bounds),
+        args=(model, keys, xdata, ydata, yerr, bounds),
     )
 
     sampler.run_mcmc(pos, nsteps, progress=True)

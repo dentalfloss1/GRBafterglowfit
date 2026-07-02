@@ -6,7 +6,12 @@ import matplotlib.cm as cm
 import corner  # 🔺 posterior visualization
 
 from grbfit.data import load_data, prepare_fit_data  # 📥 data pipeline
-from grbfit.fit import run_mcmc, make_model  # 🔧 fitting machinery
+from grbfit.fit import (
+    run_mcmc,
+    make_model,
+    samples_to_physical,
+    uses_log10_sampling,
+)  # 🔧 fitting machinery
 import os  # 📂 file system checks
 import sys  # 🚪 clean exit
 import pandas as pd
@@ -239,11 +244,78 @@ CORNER_LABELS = {
 }
 
 
+def _format_physical_tick(value):
+    if value == 0:
+        return "0"
+    abs_value = abs(value)
+    if 1e-2 <= abs_value < 1e4:
+        return f"{value:g}"
+    return f"{value:.0e}"
+
+
+def _format_physical_title(value):
+    if value == 0:
+        return "0"
+    abs_value = abs(value)
+    if 1e-2 <= abs_value < 1e4:
+        return f"{value:.3g}"
+    return f"{value:.2e}"
+
+
+def _log_tick_values(values):
+    values = np.asarray(values)
+    values = values[np.isfinite(values) & (values > 0)]
+    if len(values) == 0:
+        return []
+
+    lo = np.nanpercentile(values, 0.5)
+    hi = np.nanpercentile(values, 99.5)
+    if not np.isfinite(lo) or not np.isfinite(hi) or lo <= 0 or hi <= 0:
+        return []
+
+    min_exp = int(np.floor(np.log10(lo)))
+    max_exp = int(np.ceil(np.log10(hi)))
+    ticks = []
+    for exp in range(min_exp, max_exp + 1):
+        for mantissa in (1, 2, 5):
+            tick = mantissa * 10 ** exp
+            if lo <= tick <= hi:
+                ticks.append(tick)
+
+    if not ticks:
+        ticks = [lo, hi]
+    return ticks
+
+
+def _apply_physical_log_ticks(axes, samples, keys):
+    ndim = len(keys)
+    for row in range(ndim):
+        for col in range(ndim):
+            ax = axes[row, col]
+            if col > row:
+                continue
+
+            if uses_log10_sampling(keys[col]):
+                ticks = _log_tick_values(samples[:, col])
+                ax.set_xticks(np.log10(ticks))
+                ax.set_xticklabels([_format_physical_tick(t) for t in ticks])
+
+            if row != col and uses_log10_sampling(keys[row]):
+                ticks = _log_tick_values(samples[:, row])
+                ax.set_yticks(np.log10(ticks))
+                ax.set_yticklabels([_format_physical_tick(t) for t in ticks])
+
+
 def plot_corner(samples, keys):
     print("📈 Generating corner plot...")
     labels = [CORNER_LABELS.get(key, key) for key in keys]
+    plot_samples = np.array(samples, copy=True)
+    for i, key in enumerate(keys):
+        if uses_log10_sampling(key):
+            plot_samples[:, i] = np.log10(plot_samples[:, i])
+
     fig = corner.corner(
-        samples,
+        plot_samples,
         labels=labels,
         show_titles=False,
         label_kwargs={"fontsize": 14},
@@ -251,12 +323,17 @@ def plot_corner(samples, keys):
 
     ndim = len(keys)
     axes = np.array(fig.axes).reshape((ndim, ndim))
+    _apply_physical_log_ticks(axes, samples, keys)
     quantiles = np.percentile(samples, [16, 50, 84], axis=0)
     for i in range(ndim):
         lower, median, upper = quantiles[:, i]
         plus = upper - median
         minus = median - lower
-        title = rf"${median:.2e}^{{+{plus:.2e}}}_{{-{minus:.2e}}}$"
+        title = (
+            rf"${_format_physical_title(median)}"
+            rf"^{{+{_format_physical_title(plus)}}}"
+            rf"_{{-{_format_physical_title(minus)}}}$"
+        )
         axes[i, i].set_title(title, fontsize=12)
 
     plt.savefig("corner.png", dpi=200)  # 💾 save plot
@@ -760,9 +837,10 @@ def main():
 
     # ✂️ burn-in removal
     print("✂️ Removing burn-in + thinning chain...")
-    flat_samples = sampler.get_chain(discard=500, thin=10, flat=True)
+    flat_samples_sampling = sampler.get_chain(discard=500, thin=10, flat=True)
+    flat_samples = samples_to_physical(flat_samples_sampling, keys)
     print(f"📦 Final sample size: {len(flat_samples)}")
-    print("Chain std:", np.std(flat_samples, axis=0))
+    print("Chain std in physical units:", np.std(flat_samples, axis=0))
 
     # 🧠 summarize posterior
     summarize_chain(flat_samples, keys)
