@@ -249,7 +249,7 @@ def _format_physical_tick(value):
         return "0"
     abs_value = abs(value)
     if 1e-2 <= abs_value < 1e4:
-        return f"{value:g}"
+        return f"{value:.2g}"
     return f"{value:.0e}"
 
 
@@ -262,7 +262,7 @@ def _format_physical_title(value):
     return f"{value:.2e}"
 
 
-def _log_tick_values(values, max_ticks=3):
+def _log_tick_values(values, max_ticks=2):
     values = np.asarray(values)
     values = values[np.isfinite(values) & (values > 0)]
     if len(values) == 0:
@@ -273,16 +273,26 @@ def _log_tick_values(values, max_ticks=3):
     if not np.isfinite(lo) or not np.isfinite(hi) or lo <= 0 or hi <= 0:
         return []
 
-    log_lo = np.log10(lo)
-    log_hi = np.log10(hi)
-    if np.isclose(log_lo, log_hi):
-        return [lo]
+    min_exp = int(np.floor(np.log10(lo)))
+    max_exp = int(np.ceil(np.log10(hi)))
+    ticks = []
+    for exp in range(min_exp, max_exp + 1):
+        for mantissa in (1, 2, 5):
+            tick = mantissa * 10 ** exp
+            if lo <= tick <= hi:
+                ticks.append(tick)
 
-    tick_logs = np.linspace(log_lo, log_hi, max_ticks)
-    ticks = [10 ** tick_log for tick_log in tick_logs]
+    if len(ticks) > max_ticks:
+        target_logs = np.linspace(np.log10(lo), np.log10(hi), max_ticks + 2)[1:-1]
+        selected = []
+        for target_log in target_logs:
+            tick = min(ticks, key=lambda value: abs(np.log10(value) - target_log))
+            if tick not in selected:
+                selected.append(tick)
+        ticks = selected
 
     if not ticks:
-        ticks = [lo, hi]
+        ticks = [10 ** round(np.log10(np.nanmedian(values)))]
     return ticks
 
 
@@ -294,10 +304,25 @@ def _hide_inner_corner_ticks(axes):
             if col > row:
                 continue
 
+            ax.tick_params(axis="both", which="both", direction="out", top=False, right=False)
             if row < ndim - 1:
-                ax.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
+                ax.tick_params(
+                    axis="x",
+                    which="both",
+                    bottom=False,
+                    top=False,
+                    labelbottom=False,
+                    labeltop=False,
+                )
             if col > 0:
-                ax.tick_params(axis="y", which="both", left=False, labelleft=False)
+                ax.tick_params(
+                    axis="y",
+                    which="both",
+                    left=False,
+                    right=False,
+                    labelleft=False,
+                    labelright=False,
+                )
 
 
 def _apply_physical_log_ticks(axes, samples, keys):
