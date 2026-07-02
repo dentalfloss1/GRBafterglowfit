@@ -10,7 +10,6 @@ from grbfit.fit import (
     run_mcmc,
     make_model,
     samples_to_physical,
-    uses_log10_sampling,
 )  # 🔧 fitting machinery
 import os  # 📂 file system checks
 import sys  # 🚪 clean exit
@@ -232,117 +231,42 @@ def write_standardized_fit_csv(cfg, samples, goodness_metrics, path="fit_summary
 
 # 🔺 Corner plot (parameter correlations + constraints)
 CORNER_LABELS = {
-    "f0": r"$F_0$",
-    "f0_rev": r"$F_{0,\mathrm{rev}}$",
-    "nua0_rev": r"$\nu_{a,0,\mathrm{rev}}$",
-    "num0_rev": r"$\nu_{m,0,\mathrm{rev}}$",
-    "nuc0_rev": r"$\nu_{c,0,\mathrm{rev}}$",
-    "nua_0": r"$\nu_{a,0}$",
-    "num_0": r"$\nu_{m,0}$",
-    "nuc_0": r"$\nu_{c,0}$",
-    "t_j": r"$t_j$",
+    "f0": r"$F_0\ (\mu\mathrm{Jy})$",
+    "f0_rev": r"$F_{0,\mathrm{rev}}\ (\mu\mathrm{Jy})$",
+    "nua0_rev": r"$\nu_{a,0,\mathrm{rev}}\ (\mathrm{GHz})$",
+    "num0_rev": r"$\nu_{m,0,\mathrm{rev}}\ (\mathrm{GHz})$",
+    "nuc0_rev": r"$\nu_{c,0,\mathrm{rev}}\ (\mathrm{GHz})$",
+    "nua_0": r"$\nu_{a,0}\ (\mathrm{GHz})$",
+    "num_0": r"$\nu_{m,0}\ (\mathrm{GHz})$",
+    "nuc_0": r"$\nu_{c,0}\ (\mathrm{GHz})$",
+    "t_j": r"$t_j\ (\mathrm{d})$",
 }
 
-
-def _format_physical_title(value):
-    if value == 0:
-        return "0"
-    abs_value = abs(value)
-    if 1e-2 <= abs_value < 1e4:
-        return f"{value:.3g}"
-    return f"{value:.2e}"
-
-
-def _corner_label(key):
-    label = CORNER_LABELS.get(key, key)
-    if not uses_log10_sampling(key):
-        return label
-
-    inner = label[1:-1] if label.startswith("$") and label.endswith("$") else label
-    return rf"$\log_{{10}}({inner})$"
-
-
-def _hide_inner_corner_ticks(axes):
-    ndim = axes.shape[0]
-    for row in range(ndim):
-        for col in range(ndim):
-            ax = axes[row, col]
-            if col > row:
-                continue
-
-            ax.tick_params(axis="both", which="both", direction="out", top=False, right=False)
-            if row < ndim - 1:
-                ax.tick_params(
-                    axis="x",
-                    which="both",
-                    bottom=False,
-                    top=False,
-                    labelbottom=False,
-                    labeltop=False,
-                )
-            if col > 0:
-                ax.tick_params(
-                    axis="y",
-                    which="both",
-                    left=False,
-                    right=False,
-                    labelleft=False,
-                    labelright=False,
-                )
-
-
-def _limit_outer_corner_ticks(axes, max_ticks=3):
-    ndim = axes.shape[0]
-    for col in range(ndim):
-        ax = axes[ndim - 1, col]
-        ticks = ax.get_xticks()
-        if len(ticks) > max_ticks:
-            keep = np.unique(np.linspace(0, len(ticks) - 1, max_ticks).astype(int))
-            ax.set_xticks(ticks[keep])
-
-    for row in range(1, ndim):
-        ax = axes[row, 0]
-        ticks = ax.get_yticks()
-        if len(ticks) > max_ticks:
-            keep = np.unique(np.linspace(0, len(ticks) - 1, max_ticks).astype(int))
-            ax.set_yticks(ticks[keep])
+CORNER_SCALE = {
+    "f0": 1e6,
+    "f0_rev": 1e6,
+}
 
 
 def plot_corner(samples, keys):
     print("📈 Generating corner plot...")
-    labels = [_corner_label(key) for key in keys]
+    labels = [CORNER_LABELS.get(key, key) for key in keys]
     plot_samples = np.array(samples, copy=True)
     for i, key in enumerate(keys):
-        if uses_log10_sampling(key):
-            plot_samples[:, i] = np.log10(plot_samples[:, i])
+        plot_samples[:, i] *= CORNER_SCALE.get(key, 1.0)
 
     fig = corner.corner(
         plot_samples,
         labels=labels,
-        show_titles=False,
+        quantiles=[0.16, 0.5, 0.84],
+        show_titles=True,
+        title_fmt=".2g",
         label_kwargs={"fontsize": 14},
+        title_kwargs={"fontsize": 12},
         max_n_ticks=3,
-        top_ticks=False,
     )
 
-    ndim = len(keys)
-    axes = np.array(fig.axes).reshape((ndim, ndim))
-    _limit_outer_corner_ticks(axes)
-    _hide_inner_corner_ticks(axes)
-    quantiles = np.percentile(samples, [16, 50, 84], axis=0)
-    for i in range(ndim):
-        lower, median, upper = quantiles[:, i]
-        plus = upper - median
-        minus = median - lower
-        title = (
-            rf"${_format_physical_title(median)}"
-            rf"^{{+{_format_physical_title(plus)}}}"
-            rf"_{{-{_format_physical_title(minus)}}}$"
-        )
-        axes[i, i].set_title(title, fontsize=12)
-
-    fig.subplots_adjust(wspace=0, hspace=0)
-    plt.savefig("corner.png", dpi=200)  # 💾 save plot
+    plt.savefig("corner.png", dpi=200, bbox_inches="tight")  # 💾 save plot
     plt.close()
     print("✅ corner.png saved")
 
