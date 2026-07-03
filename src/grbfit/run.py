@@ -716,6 +716,127 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
     plt.close()
 
     print("✅ posterior_models.png saved")
+
+
+def plot_best_fit_residuals(cfg, samples, xdata, ydata, yerr, instrument):
+    print("📉 Generating best-fit residual plot...")
+
+    def positive_mask(values):
+        values = np.asarray(values)
+        return np.isfinite(values) & (values > 0)
+
+    model = make_model(cfg)
+    t, nu = xdata
+    median_theta = np.median(samples, axis=0)
+    model_vals = model(median_theta, xdata)
+
+    valid = (
+        positive_mask(t)
+        & positive_mask(nu)
+        & positive_mask(ydata)
+        & positive_mask(yerr)
+        & positive_mask(model_vals)
+    )
+
+    if not np.any(valid):
+        print("⚠️ No valid fitted detections available for residuals; skipping residuals.png")
+        return
+
+    t_valid = t[valid]
+    nu_valid = nu[valid]
+    y_valid = ydata[valid]
+    yerr_valid = yerr[valid]
+    model_valid = model_vals[valid]
+    instrument_valid = instrument[valid]
+
+    log_residual = np.log10(y_valid) - np.log10(model_valid)
+    log_sigma = yerr_valid / (y_valid * np.log(10))
+    sigma_residual = log_residual / log_sigma
+
+    finite = np.isfinite(sigma_residual) & np.isfinite(log_sigma) & (log_sigma > 0)
+    if not np.any(finite):
+        print("⚠️ Residual uncertainties are not finite; skipping residuals.png")
+        return
+
+    t_valid = t_valid[finite]
+    nu_valid = nu_valid[finite]
+    sigma_residual = sigma_residual[finite]
+    instrument_valid = instrument_valid[finite]
+
+    freq_bins = make_frequency_bins(nu_valid, max_per_bin=3)
+    nbins = len(freq_bins)
+
+    fig, axes = plt.subplots(
+        nbins, 1,
+        figsize=(7, 2.2 * nbins),
+        sharex=True,
+    )
+
+    if nbins == 1:
+        axes = [axes]
+
+    for ax, (regime, freq_group) in zip(axes, freq_bins):
+        panel_residuals = []
+        for i, freq in enumerate(np.sort(freq_group)):
+            color = COLOR_CYCLE[i % len(COLOR_CYCLE)]
+            marker = MARKERS[i % len(MARKERS)]
+            mask = nu_valid == freq
+            if not np.any(mask):
+                continue
+
+            t_band = t_valid[mask]
+            residual_band = sigma_residual[mask]
+            instrument_band = instrument_valid[mask]
+            order = np.argsort(t_band)
+
+            for inst in np.unique(instrument_band[order]):
+                inst_mask = instrument_band[order] == inst
+                inst_marker = marker
+                inst_color = color
+                label = label_helper(freq)
+
+                if inst == "XRT":
+                    inst_marker = "s"
+                    inst_color = "black"
+                    label = "Swift-XRT"
+                elif inst == "BAT":
+                    inst_marker = "D"
+                    inst_color = "red"
+                    label = "Swift-BAT"
+
+                ax.scatter(
+                    t_band[order][inst_mask],
+                    residual_band[order][inst_mask],
+                    marker=inst_marker,
+                    color=inst_color,
+                    s=36,
+                    alpha=0.9,
+                    label=label,
+                )
+
+            panel_residuals.extend(residual_band[np.isfinite(residual_band)])
+
+        ax.axhline(0, color="0.25", linewidth=1.2)
+        ax.axhline(1, color="0.65", linewidth=0.8, linestyle="--")
+        ax.axhline(-1, color="0.65", linewidth=0.8, linestyle="--")
+        ax.set_xscale("log")
+        ax.set_ylabel(f"{regime}\nresidual ($\\sigma$)")
+        ax.legend(fontsize=8)
+
+        panel_residuals = np.asarray(panel_residuals)
+        panel_residuals = panel_residuals[np.isfinite(panel_residuals)]
+        if len(panel_residuals) > 0:
+            max_abs = max(3.0, np.nanmax(np.abs(panel_residuals)) * 1.15)
+            ax.set_ylim(-max_abs, max_abs)
+
+    axes[-1].set_xlabel("Days")
+    plt.tight_layout()
+    plt.savefig("residuals.png", dpi=200)
+    plt.close()
+
+    print("✅ residuals.png saved")
+
+
 def normalize_config(cfg):
 
     if "model" not in cfg or "type" not in cfg["model"]:
@@ -813,6 +934,10 @@ def main():
 
     # 🍝 posterior predictive plot
     plot_posterior_models(cfg, flat_samples, xdata, ydata, yerr, upper_df, excluded_df, instrument)
+
+    # 📉 best-fit residuals
+    plot_best_fit_residuals(cfg, flat_samples, xdata, ydata, yerr, instrument)
+
     write_fit_report(cfg, goodness_of_fit_report)
     write_standardized_fit_csv(cfg, flat_samples, goodness_metrics)
 
