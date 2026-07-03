@@ -213,13 +213,26 @@ def log_probability(theta, model, keys, xdata, ydata, yerr, bounds):
 
 # ---------- MAIN SAMPLER ----------
 
-def run_mcmc(cfg, xdata, ydata, yerr, nwalkers=32, nsteps=2000):
+def run_mcmc(cfg, xdata, ydata, yerr, nwalkers=None, nsteps=None):
     keys, p0, bounds = build_param_vector(cfg)
     model = make_model(cfg)
 
     ndim = len(p0)
     if ndim == 0:
         raise ValueError("❌ All fit parameters are fixed; at least one parameter must have non-equal bounds for MCMC.")
+
+    fit_cfg = cfg.get("fit", {})
+    nwalkers = int(fit_cfg.get("nwalkers", nwalkers or max(32, 2 * ndim + 2)))
+    if nwalkers < 2 * ndim:
+        nwalkers = 2 * ndim
+
+    mode = fit_cfg.get("mcmc_mode", "adaptive")
+    burn_in = int(fit_cfg.get("burn_in", 1000))
+    fixed_steps = int(fit_cfg.get("nsteps", nsteps or 2000))
+    max_steps = int(fit_cfg.get("max_steps", 50000))
+    check_interval = int(fit_cfg.get("check_interval", 1000))
+    autocorr_ratio = float(fit_cfg.get("autocorr_ratio", 50))
+    autocorr_tol = float(fit_cfg.get("autocorr_tol", 0.02))
 
     pos = []
     for _ in range(nwalkers):
@@ -237,6 +250,69 @@ def run_mcmc(cfg, xdata, ydata, yerr, nwalkers=32, nsteps=2000):
         args=(model, keys, xdata, ydata, yerr, bounds),
     )
 
-    sampler.run_mcmc(pos, nsteps, progress=True)
+    print(f"Burn-in: {burn_in} steps, {nwalkers} walkers, {ndim} parameters")
+    state = sampler.run_mcmc(pos, burn_in, progress=True)
+    sampler.reset()
+
+    diagnostics = {
+        "mode": mode,
+        "burn_in": burn_in,
+        "converged": False,
+        "tau_max": np.nan,
+        "thin": 1,
+    }
+
+    if mode == "fixed":
+        print(f"Production: {fixed_steps} fixed steps")
+        sampler.run_mcmc(state, fixed_steps, progress=True)
+    else:
+        print(f"Production: adaptive, max {max_steps} steps")
+        old_tau = None
+        for _ in sampler.sample(state, iterations=max_steps, progress=True):
+            if sampler.iteration % check_interval:
+                continue
+            try:
+                tau = sampler.get_autocorr_time(tol=0)
+            except Exception:
+                print(f"  step {sampler.iteration:6d}: autocorr not available yet")
+                continue
+
+            tau_max = float(np.max(tau))
+            long_enough = sampler.iteration > autocorr_ratio * tau_max
+            stable = (
+                old_tau is not None
+                and np.all(np.abs(old_tau - tau) / tau < autocorr_tol)
+            )
+            diagnostics["tau_max"] = tau_max
+            print(
+                f"  step {sampler.iteration:6d}: "
+                f"tau_max={tau_max:.1f} "
+                f"{'converged' if long_enough and stable else '...'}"
+            )
+
+            if long_enough and stable:
+                diagnostics["converged"] = True
+                break
+            old_tau = tau
+
+    acceptance = float(np.mean(sampler.acceptance_fraction))
+    diagnostics["acceptance_fraction"] = acceptance
+    diagnostics["production_steps"] = sampler.iteration
+    try:
+        tau = sampler.get_autocorr_time(quiet=True)
+        diagnostics["tau_max"] = float(np.max(tau))
+        diagnostics["thin"] = max(1, int(0.5 * diagnostics["tau_max"]))
+    except Exception:
+        pass
+    sampler.grbfit_diagnostics = diagnostics
+
+    print(
+        "Sampler diagnostics: "
+        f"steps={diagnostics['production_steps']}, "
+        f"acceptance={acceptance:.3f}, "
+        f"tau_max={diagnostics['tau_max']:.1f}, "
+        f"thin={diagnostics['thin']}, "
+        f"converged={diagnostics['converged']}"
+    )
 
     return keys, sampler

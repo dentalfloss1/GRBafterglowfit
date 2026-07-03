@@ -69,6 +69,15 @@ fit:
     t_j: [1, 1]
   max_rest_freq: 2.47e6 # GHz, FUV in rest frame, only used in z is defined.
   fit_xrt: false
+  # MCMC controls. Use mcmc_mode: fixed for a quick fixed-length run.
+  mcmc_mode: adaptive
+  nwalkers: 32
+  burn_in: 1000
+  nsteps: 2000
+  max_steps: 50000
+  check_interval: 1000
+  autocorr_ratio: 50
+  autocorr_tol: 0.02
 """
 
     with open(path, "w") as f:
@@ -771,10 +780,20 @@ def main():
     print("✅ MCMC complete")
 
     # ✂️ burn-in removal
-    print("✂️ Removing burn-in + thinning chain...")
-    flat_samples_sampling = sampler.get_chain(discard=500, thin=10, flat=True)
+    sampler_diagnostics = getattr(sampler, "grbfit_diagnostics", {})
+    thin = int(sampler_diagnostics.get("thin", 1))
+    print(f"✂️ Flattening production chain with thin={thin}...")
+    flat_samples_sampling = sampler.get_chain(discard=0, thin=thin, flat=True)
     flat_samples = samples_to_physical(flat_samples_sampling, keys)
     print(f"📦 Final sample size: {len(flat_samples)}")
+    if sampler_diagnostics:
+        print(
+            "Sampler summary: "
+            f"steps={sampler_diagnostics.get('production_steps')}, "
+            f"acceptance={sampler_diagnostics.get('acceptance_fraction', np.nan):.3f}, "
+            f"tau_max={sampler_diagnostics.get('tau_max', np.nan):.1f}, "
+            f"converged={sampler_diagnostics.get('converged')}"
+        )
     print("Chain std in physical units:", np.std(flat_samples, axis=0))
 
     # 🧠 summarize posterior

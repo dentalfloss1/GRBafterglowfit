@@ -45,3 +45,12 @@ fit:
     t_j: [1, 1]
   max_rest_freq: 2.47e6 # GHz, FUV in rest frame, only used in z is defined.
   fit_xrt: false
+  # MCMC controls. Use mcmc_mode: fixed for a quick fixed-length run.
+  mcmc_mode: adaptive
+  nwalkers: 32
+  burn_in: 1000
+  nsteps: 2000
+  max_steps: 50000
+  check_interval: 1000
+  autocorr_ratio: 50
+  autocorr_tol: 0.02
