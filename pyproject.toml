@@ -23,6 +23,7 @@ dependencies = [
 # 🚀 CLI entry point
 [project.scripts]
 grbfit = "grbfit.run:main"
+grbfit-detectability = "grbfit.detectability:main"
 
 # 📦 Tell setuptools where your package lives
 [tool.setuptools.packages.find]

@@ -15,6 +15,7 @@ import os  # 📂 file system checks
 import sys  # 🚪 clean exit
 import pandas as pd
 import csv
+from grbfit.artifacts import write_model_fit_json
 
 def create_template_config(path="config.yaml"):
     print("📝 No config.yaml found — creating template...")
@@ -26,12 +27,15 @@ def create_template_config(path="config.yaml"):
 
 burst:
   name: your_grb_name_here
+  # Times are in observer-frame days.
   t0: 1.0
   t0_rev: 0.05
   fitstart: 0.01
   z: null
 
 data:
+  # Input CSV flux, err, and rms columns are expected in microJy.
+  # Input freq columns are expected in GHz.
   radio_file: grbmeas.csv
   other_file: otherdata.txt
   batxrt_file: null
@@ -46,26 +50,32 @@ model:
 
 fit:
   initial_guess:
+    # Flux normalizations are in Jy.
     f0: 1e-3
     f0_rev: 5e-5
+    # Break frequencies are in GHz.
     nua0_rev: 10
     num0_rev: 100
     nuc0_rev: 8e8
     nua_0: 13
     num_0: 100
     nuc_0: 8e8
+    # Jet-break time is in observer-frame days.
     t_j: null
   bounds:
     # Set lower and upper equal to remove a parameter from fitting.
     # The fixed value will be the corresponding initial_guess value.
+    # Flux normalization bounds are in Jy.
     f0: [1e-6, 1]
     f0_rev: [3e-5, 1e5]
+    # Break-frequency bounds are in GHz.
     nua0_rev: [0.1, 1e6]
     num0_rev: [0.1, 1e6]
     nuc0_rev: [1e8, 2e9]
     nua_0: [6, 15]
     num_0: [33, 1e4]
     nuc_0: [1e8, 2e9]
+    # Jet-break time bounds are in observer-frame days.
     t_j: [1, 1]
   max_rest_freq: 2.47e6 # GHz, FUV in rest frame, only used in z is defined.
   fit_xrt: false
@@ -940,6 +950,7 @@ def main():
 
     write_fit_report(cfg, goodness_of_fit_report)
     write_standardized_fit_csv(cfg, flat_samples, goodness_metrics)
+    write_model_fit_json(cfg, flat_samples, goodness_metrics)
 
     print("🎉 All done!")
 

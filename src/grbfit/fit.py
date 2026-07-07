@@ -1,6 +1,12 @@
 import numpy as np
 import emcee
-from grbfit.models import forward_model, forward_reverse_model
+from grbfit.models import (
+    forward_model,
+    forward_reverse_model,
+    forward_shock_absorption_tau,
+    reverse_shock,
+    theory_bigsbpl,
+)
 
 
 LOG10_PARAMETERS = {
@@ -55,13 +61,12 @@ def samples_to_physical(samples, keys):
     return physical
 
 
-def build_param_vector(cfg):
-    model_type = cfg["model"]["type"]
-
-    if model_type == "forward_only":
-        model_keys = ["f0", "nua_0", "num_0", "nuc_0"]
+def model_parameter_keys(cfg):
+    """Return the parameter names used by the configured model."""
+    if cfg["model"]["type"] == "forward_only":
+        keys = ["f0", "nua_0", "num_0", "nuc_0"]
     else:
-        model_keys = [
+        keys = [
             "f0",
             "f0_rev",
             "nua0_rev",
@@ -75,7 +80,14 @@ def build_param_vector(cfg):
     tj = cfg["fit"]["initial_guess"].get("t_j", None)
     
     if tj is not None:
-        model_keys.append("t_j")
+        keys.append("t_j")
+
+    return keys
+
+
+def build_param_vector(cfg):
+    model_keys = model_parameter_keys(cfg)
+    tj = cfg["fit"]["initial_guess"].get("t_j", None)
 
     if tj is not None and "t_j" not in cfg["fit"]["bounds"]:
         raise ValueError(
@@ -90,12 +102,27 @@ def build_param_vector(cfg):
     for key in model_keys:
         if key not in cfg["fit"]["bounds"]:
             raise ValueError(f"❌ Missing bounds for fit parameter '{key}'")
+        if key not in cfg["fit"]["initial_guess"]:
+            raise ValueError(f"❌ Missing initial_guess for fit parameter '{key}'")
 
         low = float(cfg["fit"]["bounds"][key][0])
         high = float(cfg["fit"]["bounds"][key][1])
+        initial = float(cfg["fit"]["initial_guess"][key])
+        if high < low:
+            raise ValueError(
+                f"❌ Invalid bounds for '{key}': lower bound {low:g} is greater "
+                f"than upper bound {high:g}."
+            )
         if high == low:
-            fixed_params[key] = float(cfg["fit"]["initial_guess"][key])
+            fixed_params[key] = initial
         else:
+            if not (low < initial < high):
+                raise ValueError(
+                    f"❌ Initial guess for '{key}' must be inside its fit bounds.\n"
+                    f"   initial_guess.{key}: {initial:g}\n"
+                    f"   bounds.{key}: [{low:g}, {high:g}]\n"
+                    "   Move the initial guess between the bounds, or widen the bounds."
+                )
             if uses_log10_sampling(key):
                 _log10_checked(key, low)
                 _log10_checked(key, high)
@@ -120,6 +147,66 @@ def build_param_vector(cfg):
 
     return keys, p0, bounds
 
+
+def parameter_dict_from_theta(cfg, theta):
+    return {
+        **cfg["fit"].get("fixed_params", {}),
+        **dict(zip(cfg["fit"]["param_keys"], theta)),
+    }
+
+
+def evaluate_model_components(cfg, theta, ivar):
+    """Evaluate total, forward, and reverse model components in Jy."""
+    params = parameter_dict_from_theta(cfg, theta)
+    k = cfg["model"]["k"]
+    p = cfg["model"]["p"]
+    t0 = cfg["burst"]["t0"]
+    t_j = params.get("t_j", None)
+
+    forward = theory_bigsbpl(
+        ivar,
+        params["f0"],
+        params["nua_0"],
+        params["num_0"],
+        params["nuc_0"],
+        k,
+        t0,
+        jet_break=t_j,
+        p=p,
+    )
+
+    if cfg["model"]["type"] == "forward_only":
+        reverse_observed = np.zeros_like(forward, dtype=float)
+        total = forward
+    else:
+        reverse_intrinsic = reverse_shock(
+            ivar,
+            params["f0_rev"],
+            params["nua0_rev"],
+            params["num0_rev"],
+            params["nuc0_rev"],
+            k,
+            cfg["burst"]["t0_rev"],
+            p,
+        )
+        tau_abs_fs = forward_shock_absorption_tau(
+            ivar,
+            params["nua_0"],
+            params["num_0"],
+            params["nuc_0"],
+            k,
+            t0,
+            p=p,
+        )
+        reverse_observed = reverse_intrinsic * np.exp(-tau_abs_fs)
+        total = forward + reverse_observed
+
+    return {
+        "total": total,
+        "forward": forward,
+        "reverse": reverse_observed,
+    }
+
 def make_model(cfg):
     k = cfg["model"]["k"]
     p = cfg["model"]["p"]
@@ -128,10 +215,7 @@ def make_model(cfg):
 
     if cfg["model"]["type"] == "forward_only":
         def model(theta, ivar):
-            params = {
-                **cfg["fit"].get("fixed_params", {}),
-                **dict(zip(cfg["fit"]["param_keys"], theta)),
-            }
+            params = parameter_dict_from_theta(cfg, theta)
             return forward_model(
                                  ivar,
                                  params["f0"],
@@ -146,10 +230,7 @@ def make_model(cfg):
 
     else:
         def model(theta, ivar):
-            params = {
-                **cfg["fit"].get("fixed_params", {}),
-                **dict(zip(cfg["fit"]["param_keys"], theta)),
-            }
+            params = parameter_dict_from_theta(cfg, theta)
         
             return forward_reverse_model(
                 ivar,
