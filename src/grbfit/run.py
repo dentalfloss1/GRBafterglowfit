@@ -139,7 +139,7 @@ def calculate_goodness_of_fit(cfg, samples, xdata, ydata, yerr):
 
     log_data = np.log10(ydata[valid] + eps)
     log_model = np.log10(model_vals[valid] + eps)
-    log_err = yerr[valid] / (ydata[valid] + eps)
+    log_err = yerr[valid] / ((ydata[valid] + eps) * np.log(10))
     chi_square = np.sum(((log_data - log_model) / log_err) ** 2)
 
     metrics["chisq"] = chi_square
@@ -284,6 +284,15 @@ def plot_corner(samples, keys):
         title_kwargs={"fontsize": 12},
         max_n_ticks=3,
     )
+
+    axes = np.asarray(fig.axes).reshape((len(keys), len(keys)))
+    for i in range(len(keys)):
+        q16, q50, q84 = np.percentile(plot_samples[:, i], [16, 50, 84])
+        title = (
+            f"${q50:.2g}_{{-{q50 - q16:.2g}}}"
+            f"^{{+{q84 - q50:.2g}}}$"
+        )
+        axes[i, i].set_title(title, fontsize=12)
 
     plt.savefig("corner.png", dpi=200, bbox_inches="tight")  # 💾 save plot
     plt.close()
@@ -775,6 +784,7 @@ def plot_best_fit_residuals(cfg, samples, xdata, ydata, yerr, instrument):
 
     freq_bins = make_frequency_bins(nu_valid, max_per_bin=3)
     nbins = len(freq_bins)
+    max_abs_residual = max(3.0, np.nanmax(np.abs(sigma_residual)) * 1.15)
 
     fig, axes = plt.subplots(
         nbins, 1,
@@ -786,7 +796,6 @@ def plot_best_fit_residuals(cfg, samples, xdata, ydata, yerr, instrument):
         axes = [axes]
 
     for ax, (regime, freq_group) in zip(axes, freq_bins):
-        panel_residuals = []
         for i, freq in enumerate(np.sort(freq_group)):
             color = COLOR_CYCLE[i % len(COLOR_CYCLE)]
             marker = MARKERS[i % len(MARKERS)]
@@ -823,21 +832,13 @@ def plot_best_fit_residuals(cfg, samples, xdata, ydata, yerr, instrument):
                     alpha=0.9,
                     label=label,
                 )
-
-            panel_residuals.extend(residual_band[np.isfinite(residual_band)])
-
         ax.axhline(0, color="0.25", linewidth=1.2)
         ax.axhline(1, color="0.65", linewidth=0.8, linestyle="--")
         ax.axhline(-1, color="0.65", linewidth=0.8, linestyle="--")
         ax.set_xscale("log")
         ax.set_ylabel(f"{regime}\nresidual ($\\sigma$)")
         ax.legend(fontsize=8)
-
-        panel_residuals = np.asarray(panel_residuals)
-        panel_residuals = panel_residuals[np.isfinite(panel_residuals)]
-        if len(panel_residuals) > 0:
-            max_abs = max(3.0, np.nanmax(np.abs(panel_residuals)) * 1.15)
-            ax.set_ylim(-max_abs, max_abs)
+        ax.set_ylim(-max_abs_residual, max_abs_residual)
 
     axes[-1].set_xlabel("Days")
     plt.tight_layout()

@@ -1,6 +1,9 @@
 import numpy as np
 import traceback
 
+FS_ABSORPTION_SMOOTH_WIDTH = 0.2
+
+
 def dsbpl(x,A,xb1,alpha1,alpha2,xb2,alpha3,s=0.2):
     """
     Multiplicative smoothly broken power law
@@ -288,19 +291,43 @@ def forward_shock_break_frequencies(ivar, nua_0, num_0, nuc_0, k, t0, p=2.2):
     return nua, num, nuc
 
 
-def forward_shock_absorption_tau(ivar, nua_0, num_0, nuc_0, k, t0, p=2.2):
+def forward_shock_absorption_tau(
+    ivar,
+    nua_0,
+    num_0,
+    nuc_0,
+    k,
+    t0,
+    p=2.2,
+    smooth_width=FS_ABSORPTION_SMOOTH_WIDTH,
+):
     """FS optical depth for RS photons from McMahon, Kumar & Piran 2006 Eq. 14."""
     _, nu = ivar
     nu = np.asarray(nu)
     nua, num, nuc = forward_shock_break_frequencies(
         ivar, nua_0, num_0, nuc_0, k, t0, p=p
     )
-    below_lower_fs_break = nu < np.minimum(nuc, num)
-    return np.where(
-        below_lower_fs_break,
-        (nu / nua) ** (5 / 3),
-        (nu / nua) ** (-(p + 4) / 2),
-    )
+    lower_fs_break = np.minimum(nuc, num)
+    low_slope = 5 / 3
+    high_slope = -(p + 4) / 2
+
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        log_tau_low = low_slope * np.log(nu / nua)
+        log_tau_break = low_slope * np.log(lower_fs_break / nua)
+        log_tau_high = log_tau_break + high_slope * np.log(nu / lower_fs_break)
+
+        if smooth_width <= 0:
+            below_lower_fs_break = nu < lower_fs_break
+            return np.where(
+                below_lower_fs_break,
+                np.exp(log_tau_low),
+                np.exp(log_tau_high),
+            )
+
+        log_break_ratio = np.log(nu / lower_fs_break)
+        high_weight = 0.5 * (1.0 + np.tanh(log_break_ratio / smooth_width))
+        log_tau = (1.0 - high_weight) * log_tau_low + high_weight * log_tau_high
+        return np.exp(log_tau)
 
 
 def forward_model(ivar, f0, nua_0, num_0, nuc_0, k, t0, p, t_j=None):
