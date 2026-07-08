@@ -3,7 +3,6 @@ import traceback
 
 def dsbpl(x,A,xb1,alpha1,alpha2,xb2,alpha3,s=0.2):
     """
-    from chatGPT
     Multiplicative smoothly broken power law
     """
 
