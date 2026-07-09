@@ -11,18 +11,17 @@ from grbfit.models import (
 
 
 class ForwardShockAbsorptionTests(unittest.TestCase):
-    def test_absorption_tau_is_continuous_when_lower_break_crosses_band(self):
-        nua_0 = 20.82295158421092
-        num_0 = 1608.5675270013865
+    def test_absorption_tau_uses_sharp_lower_break_switch(self):
+        nua_0 = 10.0
+        num_0 = 100.0
         nuc_0 = 8e8
         k = 2
         t0 = 1.0
         p = 2.2
-        freq = 6.55
-        t_cross = (num_0 / freq) ** (2 / 3)
+        lower_break = num_0
 
-        times = t_cross * np.array([0.999, 1.0, 1.001])
-        freqs = np.full_like(times, freq)
+        freqs = lower_break * np.array([0.99, 1.0, 1.01])
+        times = np.full_like(freqs, t0)
         tau = forward_shock_absorption_tau(
             (times, freqs),
             nua_0,
@@ -33,7 +32,12 @@ class ForwardShockAbsorptionTests(unittest.TestCase):
             p=p,
         )
 
-        self.assertLess(np.max(tau) / np.min(tau), 1.05)
+        expected = np.array([
+            (freqs[0] / nua_0) ** (-5 / 3),
+            (freqs[1] / nua_0) ** (-(p + 4) / 2),
+            (freqs[2] / nua_0) ** (-(p + 4) / 2),
+        ])
+        np.testing.assert_allclose(tau, expected, rtol=1e-12)
 
     def test_absorption_tau_matches_asymptotic_branches_far_from_break(self):
         nua_0 = 10.0
@@ -68,7 +72,7 @@ class ForwardShockAbsorptionTests(unittest.TestCase):
             p=p,
         )
 
-        low_expected = (low_freq / nua_0) ** (5 / 3)
+        low_expected = (low_freq / nua_0) ** (-5 / 3)
         high_expected = (high_freq / nua_0) ** (-(p + 4) / 2)
 
         np.testing.assert_allclose(tau[0], low_expected, rtol=1e-8)

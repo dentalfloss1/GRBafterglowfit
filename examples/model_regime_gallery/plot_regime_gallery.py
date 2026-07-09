@@ -213,7 +213,7 @@ def _plot_fs_absorption_factor(p: float, n_points: int) -> plt.Figure:
     freqs = np.geomspace(1e0, 1e13, n_points)
     times_to_plot = np.array([0.05, 0.3, 1.0, 3.0])
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-    low_label = r"$\tau_{\rm FS}\propto(\nu/\nu_{a,\rm FS})^{5/3}$"
+    low_label = r"$\tau_{\rm FS}\propto(\nu/\nu_{a,\rm FS})^{-5/3}$"
     high_label = rf"$\tau_{{\rm FS}}\propto(\nu/\nu_{{a,\rm FS}})^{{-{_format_number((p + 4) / 2)}}}$"
 
     for row, k in enumerate((0, 2)):

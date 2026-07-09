@@ -1,7 +1,5 @@
 import numpy as np
 
-FS_ABSORPTION_SMOOTH_WIDTH = 0.2
-
 RS_SLOW_COOLING = "nu_a < nu_m < nu_c"
 RS_FAST_COOLING = "nu_a < nu_c < nu_m"
 RS_SELF_ABSORBED_SLOW = "nu_m < nu_a < nu_c"
@@ -781,7 +779,6 @@ def forward_shock_absorption_tau(
     k,
     t0,
     p=2.2,
-    smooth_width=FS_ABSORPTION_SMOOTH_WIDTH,
 ):
     """FS optical depth for RS photons from McMahon, Kumar & Piran 2006 Eq. 14."""
     _, nu = ivar
@@ -790,25 +787,13 @@ def forward_shock_absorption_tau(
         ivar, nua_0, num_0, nuc_0, k, t0, p=p
     )
     lower_fs_break = np.minimum(nuc, num)
-    low_slope = 5 / 3
-    high_slope = -(p + 4) / 2
+    below_lower_fs_break = nu < lower_fs_break
 
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        log_tau_low = low_slope * np.log(nu / nua)
-        log_tau_high = high_slope * np.log(nu / nua)
+        tau_low = (nu / nua) ** (-5 / 3)
+        tau_high = (nu / nua) ** (-(p + 4) / 2)
 
-        if smooth_width <= 0:
-            below_lower_fs_break = nu < lower_fs_break
-            return np.where(
-                below_lower_fs_break,
-                np.exp(log_tau_low),
-                np.exp(log_tau_high),
-            )
-
-        log_break_ratio = np.log(nu / lower_fs_break)
-        high_weight = 0.5 * (1.0 + np.tanh(log_break_ratio / smooth_width))
-        log_tau = (1.0 - high_weight) * log_tau_low + high_weight * log_tau_high
-        return np.exp(log_tau)
+    return np.where(below_lower_fs_break, tau_low, tau_high)
 
 
 def forward_model(ivar, f0, nua_0, num_0, nuc_0, k, t0, p, t_j=None):
