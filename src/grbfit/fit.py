@@ -3,9 +3,9 @@ import emcee
 from grbfit.models import (
     forward_model,
     forward_reverse_model,
+    forward_shock_flux,
     forward_shock_absorption_tau,
     reverse_shock,
-    theory_bigsbpl,
 )
 
 
@@ -163,7 +163,7 @@ def evaluate_model_components(cfg, theta, ivar):
     t0 = cfg["burst"]["t0"]
     t_j = params.get("t_j", None)
 
-    forward = theory_bigsbpl(
+    forward = forward_shock_flux(
         ivar,
         params["f0"],
         params["nua_0"],

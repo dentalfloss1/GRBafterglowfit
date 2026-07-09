@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from grbfit.models import dsbpl, reverse_shock, theory_bigsbpl, tsbpl
+from grbfit.models import dsbpl, forward_shock_flux, reverse_shock, tsbpl
 
 
 P = 2.2
@@ -77,7 +77,7 @@ def _sharp_tsbpl(x, amplitude, xb1, xb2, xb3, alpha1, alpha2, alpha3, alpha4):
 
 
 def _forward_flux(times, freqs, k, nua0=1e2, num0=1e8, nuc0=1e15):
-    return theory_bigsbpl(
+    return forward_shock_flux(
         (np.asarray(times, dtype=float), np.asarray(freqs, dtype=float)),
         F0,
         nua0,

@@ -41,7 +41,7 @@ def tsbpl(x, A, xb1, xb2, xb3, alpha1, alpha2, alpha3, alpha4, s=0.2):
 
     return A * term1 * smooth1 * smooth2 * smooth3
 
-def theory_bigsbpl(ivar, f0, nu0_1, nu0_2,nu0_3, k, t0,jet_break=None, p=2.2):
+def forward_shock_flux(ivar, f0, nu0_1, nu0_2,nu0_3, k, t0,jet_break=None, p=2.2):
     
     d=0.1
     s = 10
@@ -485,7 +485,7 @@ def forward_shock_absorption_tau(
 
 
 def forward_model(ivar, f0, nua_0, num_0, nuc_0, k, t0, p, t_j=None):
-    return theory_bigsbpl(ivar, f0, nua_0, num_0, nuc_0, k, t0, jet_break=t_j, p=p)
+    return forward_shock_flux(ivar, f0, nua_0, num_0, nuc_0, k, t0, jet_break=t_j, p=p)
 
 
 def forward_reverse_model(
@@ -495,7 +495,11 @@ def forward_reverse_model(
     nua_0, num_0, nuc_0,
     k, t0, t0_rev, p, t_j=None
 ):
-    fwd = theory_bigsbpl(ivar, f0, nua_0, num_0, nuc_0, k, t0, jet_break=t_j, p=p)
+    fwd = forward_shock_flux(ivar, f0, nua_0, num_0, nuc_0, k, t0, jet_break=t_j, p=p)
     rev = reverse_shock(ivar, f0_rev, nua0_rev, num0_rev, nuc0_rev, k, t0_rev, p)
     tau_abs_fs = forward_shock_absorption_tau(ivar, nua_0, num_0, nuc_0, k, t0, p=p)
     return fwd + rev * np.exp(-tau_abs_fs)
+
+
+# Backward-compatible alias for older code/tests that imported this name.
+theory_bigsbpl = forward_shock_flux
