@@ -1,7 +1,10 @@
 import numpy as np
-import traceback
 
 FS_ABSORPTION_SMOOTH_WIDTH = 0.2
+
+RS_SLOW_COOLING = "nu_a < nu_m < nu_c"
+RS_FAST_COOLING = "nu_a < nu_c < nu_m"
+RS_SELF_ABSORBED_SLOW = "nu_m < nu_a < nu_c"
 
 
 def dsbpl(x,A,xb1,alpha1,alpha2,xb2,alpha3,s=0.2):
@@ -230,40 +233,191 @@ def theory_bigsbpl(ivar, f0, nu0_1, nu0_2,nu0_3, k, t0,jet_break=None, p=2.2):
 
 
 
-# Relativistic Rev. Shock
+def _reverse_shock_thick_shell_indices(k, p, regime):
+    """Temporal indices for the thick-shell reverse shock in Table 5."""
+    fmax = -(47 - 10 * k) / (12 * (4 - k))
+    num = -(73 - 14 * k) / (12 * (4 - k))
+    nuc = num
+
+    if regime in (RS_SLOW_COOLING, RS_FAST_COOLING):
+        nua = -(32 - 7 * k) / (15 * (4 - k))
+    elif regime == RS_SELF_ABSORBED_SLOW:
+        nua = -(
+            p * (73 - 14 * k) + 2 * (67 - 14 * k)
+        ) / (12 * (4 - k) * (p + 4))
+    else:
+        raise ValueError(f"Unsupported reverse-shock spectral regime: {regime}")
+
+    return fmax, nua, num, nuc
+
+
+def _reverse_shock_initial_regime(nua0, num0, nuc0):
+    if nua0 < num0 < nuc0:
+        return RS_SLOW_COOLING
+    if nua0 < nuc0 < num0:
+        return RS_FAST_COOLING
+    if num0 < nua0 < nuc0:
+        return RS_SELF_ABSORBED_SLOW
+    raise ValueError(
+        "Unsupported reverse-shock break ordering at t0_rev. "
+        "Supported thick-shell orderings are "
+        f"{RS_SLOW_COOLING}, {RS_FAST_COOLING}, and {RS_SELF_ABSORBED_SLOW}; "
+        f"got nu_a={nua0:g}, nu_m={num0:g}, nu_c={nuc0:g}."
+    )
+
+
+def _crossing_time(t_ref, nu_left, nu_right, b_left, b_right):
+    return t_ref * (nu_right / nu_left) ** (1 / (b_left - b_right))
+
+
+def _reverse_shock_spectrum(regime, nu, fnu_max, nua, num, nuc, p):
+    if regime == RS_SLOW_COOLING:
+        # nu_a < nu_m < nu_c
+        f_at_nua = fnu_max * (nua / num) ** (1 / 3)
+        return tsbpl(nu, f_at_nua, nua, num, nuc, 2, 1 / 3, -(p - 1) / 2, -p / 2)
+
+    if regime == RS_FAST_COOLING:
+        # nu_a < nu_c < nu_m
+        f_at_nua = fnu_max * (nua / nuc) ** (1 / 3)
+        return tsbpl(nu, f_at_nua, nua, nuc, num, 2, 1 / 3, -1 / 2, -p / 2)
+
+    if regime == RS_SELF_ABSORBED_SLOW:
+        # nu_m < nu_a < nu_c
+        f_at_num = fnu_max * (num / nua) ** 3
+        return tsbpl(nu, f_at_num, num, nua, nuc, 2, 5 / 2, -(p - 1) / 2, -p / 2)
+
+    raise ValueError(f"Unsupported reverse-shock spectral regime: {regime}")
+
+
+def _reverse_shock_branch_state(tval, f0, nua0, num0, nuc0, k, t0_rev, p):
+    initial_regime = _reverse_shock_initial_regime(nua0, num0, nuc0)
+
+    fmax_i, ba_i, bm_i, bc_i = _reverse_shock_thick_shell_indices(
+        k, p, initial_regime
+    )
+
+    if initial_regime == RS_SLOW_COOLING:
+        t_am = _crossing_time(t0_rev, nua0, num0, ba_i, bm_i)
+        if tval <= t_am:
+            scale = tval / t0_rev
+            return (
+                initial_regime,
+                f0 * scale ** fmax_i,
+                nua0 * scale ** ba_i,
+                num0 * scale ** bm_i,
+                nuc0 * scale ** bc_i,
+                None,
+            )
+
+        fmax_t, ba_t, bm_t, bc_t = _reverse_shock_thick_shell_indices(
+            k, p, RS_SELF_ABSORBED_SLOW
+        )
+        scale_cross = t_am / t0_rev
+        fmax_cross = f0 * scale_cross ** fmax_i
+        nu_cross = nua0 * scale_cross ** ba_i
+        nuc_cross = nuc0 * scale_cross ** bc_i
+        scale = tval / t_am
+        nua = nu_cross * scale ** ba_t
+        num = nu_cross * scale ** bm_t
+        nuc = nuc_cross * scale ** bc_t
+        if not (num < nua < nuc):
+            raise ValueError(
+                "Unsupported reverse-shock break ordering after nu_a/nu_m "
+                f"crossing: nu_m={num:g}, nu_a={nua:g}, nu_c={nuc:g}."
+            )
+        return (
+            RS_SELF_ABSORBED_SLOW,
+            fmax_cross * scale ** fmax_t,
+            nua,
+            num,
+            nuc,
+            (initial_regime, t_am),
+        )
+
+    if initial_regime == RS_FAST_COOLING:
+        t_ac = _crossing_time(t0_rev, nua0, nuc0, ba_i, bc_i)
+        if tval > t_ac:
+            scale = tval / t0_rev
+            nua = nua0 * scale ** ba_i
+            num = num0 * scale ** bm_i
+            nuc = nuc0 * scale ** bc_i
+            raise ValueError(
+                "Unsupported reverse-shock break ordering after nu_a/nu_c "
+                f"crossing: nu_a={nua:g}, nu_c={nuc:g}, nu_m={num:g}."
+            )
+        scale = tval / t0_rev
+        return (
+            initial_regime,
+            f0 * scale ** fmax_i,
+            nua0 * scale ** ba_i,
+            num0 * scale ** bm_i,
+            nuc0 * scale ** bc_i,
+            None,
+        )
+
+    scale = tval / t0_rev
+    nua = nua0 * scale ** ba_i
+    num = num0 * scale ** bm_i
+    nuc = nuc0 * scale ** bc_i
+    if not (num < nua < nuc):
+        raise ValueError(
+            "Unsupported reverse-shock break ordering for self-absorbed "
+            f"slow-cooling branch: nu_m={num:g}, nu_a={nua:g}, nu_c={nuc:g}."
+        )
+    return (
+        initial_regime,
+        f0 * scale ** fmax_i,
+        nua,
+        num,
+        nuc,
+        None,
+    )
+
+
+def reverse_shock_break_frequencies(ivar, nua0_rev, num0_rev, nuc0_rev, k, t0_rev, p=2.2):
+    """Return thick-shell RS (nu_a, nu_m, nu_c) at the requested times."""
+    t, _ = ivar
+    t = np.asarray(t)
+    nua = []
+    num = []
+    nuc = []
+    for tval in t:
+        _, _, nua_t, num_t, nuc_t, _ = _reverse_shock_branch_state(
+            tval, 1.0, nua0_rev, num0_rev, nuc0_rev, k, t0_rev, p
+        )
+        nua.append(nua_t)
+        num.append(num_t)
+        nuc.append(nuc_t)
+    return np.array(nua), np.array(num), np.array(nuc)
+
+
+# Relativistic thick-shell reverse shock.
 def reverse_shock(ivar, f0, nu0_1, nu0_2, nu0_3, k, t0_rev,p=2.2,givenuvals=False):
     t, nu = ivar
     res = []
-    a1 = -(47-10*k)/(12*(4-k))
-    b1 = -(32-7*k)/(15*(4-k))
-    b2 = -(73-14*k)/(12*(4-k))
-    b3 = -(73-14*k)/(12*(4-k))
     nuvals = []
-    try:
-        for tval,nuval in zip(t,nu):
-            fnu_m = f0*(tval/t0_rev)**a1
-            nua = nu0_1*(tval/t0_rev)**b1
-            num = nu0_2*(tval/t0_rev)**b2
-            nuc = nu0_3*(tval/t0_rev)**b3
-            if True: #nuval < nua:
-                c1 = 2 
-                c2 = 1/3
-                c3 = -(p-1)/2
-                c4 = -(p-1)/2 - 0.1
-                fpk = fnu_m*(nua/num)**(1/3)
-                result = tsbpl(nuval,fpk,nua,num,nuc,c1,c2,c3,c4)
-            else:
-                c1 = 1/3
-                c2 = -(p-1)/2
-                c3 = -(p-1)/2 - 0.1
-                fpk = fnu_m
-                result = dsbpl(nuval,fpk,num,c1,c2,nuc,c3)
-            res.append(result)
-            if givenuvals:
-                nuvals.append((tval,nua,num,nuc))
-    except Exception as e:
-        print(traceback.format_exc())
-        print(t,nu,ivar)
+    for tval,nuval in zip(t,nu):
+        regime, fnu_max, nua, num, nuc, transition = _reverse_shock_branch_state(
+            tval, f0, nu0_1, nu0_2, nu0_3, k, t0_rev, p
+        )
+        result = _reverse_shock_spectrum(regime, nuval, fnu_max, nua, num, nuc, p)
+
+        if transition is not None:
+            previous_regime, t_cross = transition
+            _, fmax_old, nua_old, num_old, nuc_old, _ = _reverse_shock_branch_state(
+                t_cross, f0, nu0_1, nu0_2, nu0_3, k, t0_rev, p
+            )
+            old_at_cross = _reverse_shock_spectrum(
+                previous_regime, nuval, fmax_old, nua_old, num_old, nuc_old, p
+            )
+            new_at_cross = _reverse_shock_spectrum(
+                regime, nuval, fmax_old, nua_old, num_old, nuc_old, p
+            )
+            result = old_at_cross * result / new_at_cross
+
+        res.append(result)
+        if givenuvals:
+            nuvals.append((tval,nua,num,nuc))
     if givenuvals:
         return np.array(res),np.array(nuvals) 
     else:
