@@ -795,8 +795,7 @@ def forward_shock_absorption_tau(
 
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         log_tau_low = low_slope * np.log(nu / nua)
-        log_tau_break = low_slope * np.log(lower_fs_break / nua)
-        log_tau_high = log_tau_break + high_slope * np.log(nu / lower_fs_break)
+        log_tau_high = high_slope * np.log(nu / nua)
 
         if smooth_width <= 0:
             below_lower_fs_break = nu < lower_fs_break

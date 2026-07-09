@@ -25,6 +25,7 @@ if SRC_DIR.exists():
 
 from grbfit.models import (  # noqa: E402
     forward_shock_absorption_tau,
+    forward_shock_break_frequencies,
     forward_shock_flux,
     reverse_shock,
 )
@@ -204,6 +205,75 @@ def _fs_absorption_factor(times: np.ndarray, freqs: np.ndarray, k: int, p: float
         p=p,
     )
     return np.exp(-tau)
+
+
+def _plot_fs_absorption_factor(p: float, n_points: int) -> plt.Figure:
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
+    fig.suptitle(r"Forward-shock absorption applied to reverse-shock photons")
+    freqs = np.geomspace(1e0, 1e13, n_points)
+    times_to_plot = np.array([0.05, 0.3, 1.0, 3.0])
+    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    low_label = r"$\tau_{\rm FS}\propto(\nu/\nu_{a,\rm FS})^{5/3}$"
+    high_label = rf"$\tau_{{\rm FS}}\propto(\nu/\nu_{{a,\rm FS}})^{{-{_format_number((p + 4) / 2)}}}$"
+
+    for row, k in enumerate((0, 2)):
+        tau_ax = axes[row, 0]
+        transmission_ax = axes[row, 1]
+
+        for idx, tval in enumerate(times_to_plot):
+            times = np.full_like(freqs, tval)
+            tau = forward_shock_absorption_tau(
+                (times, freqs),
+                1e4,
+                1e8,
+                1e12,
+                k,
+                T0,
+                p=p,
+            )
+            transmission = np.exp(-np.clip(tau, 0.0, 700.0))
+            label = rf"$t={_format_number(tval)}$"
+            color = colors[idx % len(colors)]
+            tau_ax.loglog(freqs, tau, lw=1.8, color=color, label=label)
+            transmission_ax.semilogx(freqs, transmission, lw=1.8, color=color, label=label)
+
+        ref_breaks = forward_shock_break_frequencies(
+            (np.array([T0]), np.array([1.0])),
+            1e4,
+            1e8,
+            1e12,
+            k,
+            T0,
+            p=p,
+        )
+        nua_ref, num_ref, nuc_ref = [breaks[0] for breaks in ref_breaks]
+        lower_ref = min(num_ref, nuc_ref)
+        for ax in (tau_ax, transmission_ax):
+            ax.axvline(nua_ref, color="0.25", lw=1.0, ls=":", label=r"$\nu_{a,\rm FS}$ at $t_0$")
+            ax.axvline(
+                lower_ref,
+                color="0.55",
+                lw=1.0,
+                ls="--",
+                label=r"$\min(\nu_{m,\rm FS},\nu_{c,\rm FS})$ at $t_0$",
+            )
+            ax.set_xlim(freqs[0], freqs[-1])
+            ax.grid(True, which="both", alpha=0.2)
+
+        tau_ax.text(0.03, 0.08, low_label + "\n" + high_label, transform=tau_ax.transAxes, fontsize=8)
+        tau_ax.set_title(rf"$k={k}$ optical depth")
+        tau_ax.set_ylabel(r"$\tau_{\rm FS}$")
+        tau_ax.set_ylim(1e-12, 1e8)
+        transmission_ax.set_title(rf"$k={k}$ transmission")
+        transmission_ax.set_ylabel(r"$e^{-\tau_{\rm FS}}$")
+        transmission_ax.set_ylim(-0.03, 1.03)
+        transmission_ax.legend(fontsize=7, loc="best")
+
+    axes[-1, 0].set_xlabel("Frequency")
+    axes[-1, 1].set_xlabel("Frequency")
+    axes[0, 0].legend(fontsize=7, loc="best")
+    fig.tight_layout()
+    return fig
 
 
 def _temporal_exponents(shock: str, case: RegimeCase, k: int, p: float) -> tuple[float, list[float]]:
@@ -430,6 +500,7 @@ def build_gallery(output_dir: Path, formats: list[str], p: float, n_points: int)
     outputs = []
     outputs.extend(_save_figure(_plot_spectra("fs", p, n_points), output_dir, "forward_shock_spectra", formats))
     outputs.extend(_save_figure(_plot_light_curves("fs", p, n_points), output_dir, "forward_shock_light_curves", formats))
+    outputs.extend(_save_figure(_plot_fs_absorption_factor(p, n_points), output_dir, "forward_shock_absorption_factor", formats))
     outputs.extend(_save_figure(_plot_spectra("rs", p, n_points), output_dir, "reverse_shock_spectra", formats))
     outputs.extend(_save_figure(_plot_light_curves("rs", p, n_points), output_dir, "reverse_shock_light_curves", formats))
     return outputs

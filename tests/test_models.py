@@ -69,8 +69,7 @@ class ForwardShockAbsorptionTests(unittest.TestCase):
         )
 
         low_expected = (low_freq / nua_0) ** (5 / 3)
-        tau_break = (lower_break / nua_0) ** (5 / 3)
-        high_expected = tau_break * (high_freq / lower_break) ** (-(p + 4) / 2)
+        high_expected = (high_freq / nua_0) ** (-(p + 4) / 2)
 
         np.testing.assert_allclose(tau[0], low_expected, rtol=1e-8)
         np.testing.assert_allclose(tau[1], high_expected, rtol=1e-8)
