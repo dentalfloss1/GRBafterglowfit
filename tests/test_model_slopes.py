@@ -115,7 +115,7 @@ def _forward_transition_time(k, nua0=1e2, num0=1e8):
     return T0 * (num0 / nua0) ** (1 / (b_a - b_m))
 
 
-def _forward_late_code_breaks(time, k, nua0=1e2, num0=1e8, nuc0=1e15):
+def _forward_late_breaks(time, k, nua0=1e2, num0=1e8, nuc0=1e15):
     b_a_early = -3 * k / (5 * (4 - k))
     b_m = -3 / 2
     b_c = -(4 - 3 * k) / (2 * (4 - k))
@@ -124,9 +124,9 @@ def _forward_late_code_breaks(time, k, nua0=1e2, num0=1e8, nuc0=1e15):
     nu_cross = nua0 * (t_cross / T0) ** b_a_early
     nuc_cross = nuc0 * (t_cross / T0) ** b_c
     return [
-        nu_cross * (time / T0) ** b_m,
-        nu_cross * (time / T0) ** b_a_late,
-        nuc_cross * (time / T0) ** b_c,
+        nu_cross * (time / t_cross) ** b_m,
+        nu_cross * (time / t_cross) ** b_a_late,
+        nuc_cross * (time / t_cross) ** b_c,
     ]
 
 
@@ -213,11 +213,11 @@ class ForwardShockSlopeTests(unittest.TestCase):
                     _log_slope(times, flux), expected, delta=0.05
                 )
 
-    def test_late_branch_temporal_slopes_match_expected_segments(self):
+    def test_late_branch_spectral_and_temporal_slopes_match_expected_segments(self):
         for k in (0, 2):
-            t_start = 10 * _forward_transition_time(k)
+            t_start = 1000 * _forward_transition_time(k)
             times = [t_start, 2 * t_start]
-            breaks = _forward_late_code_breaks(t_start, k)
+            breaks = _forward_late_breaks(t_start, k)
             freqs = [
                 breaks[0] / 1e3,
                 np.sqrt(breaks[0] * breaks[1]),
@@ -234,6 +234,15 @@ class ForwardShockSlopeTests(unittest.TestCase):
                 self.assertAlmostEqual(
                     _log_slope(times, temporal_flux),
                     expected_temporal,
+                    delta=0.05,
+                )
+
+            for segment, expected_spectral in enumerate(slopes):
+                freq_pair = [freqs[segment], freqs[segment] * 2]
+                spectral_flux = _forward_flux([t_start, t_start], freq_pair, k)
+                self.assertAlmostEqual(
+                    _log_slope(freq_pair, spectral_flux),
+                    expected_spectral,
                     delta=0.05,
                 )
 

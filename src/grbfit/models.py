@@ -90,17 +90,17 @@ def _forward_shock_slow_to_self_absorbed_crossing(nua0, num0, k, t0):
     return t0 * (num0 / nua0) ** (1 / (ba - bm))
 
 
-def _legacy_forward_shock_late_breaks(tval, nua0, num0, nuc0, k, t0, p):
-    """Current late-branch break normalization, retained for the structure-only refactor."""
+def _forward_shock_self_absorbed_breaks(tval, nua0, num0, nuc0, k, t0, p):
+    """Late slow-cooling FS breaks scaled from the physical nu_a/nu_m crossing."""
     _, ba_early, bm, bc = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
     _, ba_late, _, _ = _forward_shock_relativistic_indices(k, p, FS_SELF_ABSORBED_SLOW)
     t_cross = t0 * (num0 / nua0) ** (1 / (ba_early - bm))
     nu_cross = nua0 * (t_cross / t0) ** ba_early
     nuc_cross = nuc0 * (t_cross / t0) ** bc
     return (
-        nu_cross * (tval / t0) ** ba_late,
-        nu_cross * (tval / t0) ** bm,
-        nuc_cross * (tval / t0) ** bc,
+        nu_cross * (tval / t_cross) ** ba_late,
+        nu_cross * (tval / t_cross) ** bm,
+        nuc_cross * (tval / t_cross) ** bc,
     )
 
 
@@ -116,9 +116,9 @@ def _forward_shock_slow_branch_state(tval, f0, nua0, num0, nuc0, k, t0, p):
     )
 
 
-def _forward_shock_legacy_self_absorbed_state(tval, f0, nua0, num0, nuc0, k, t0, p):
+def _forward_shock_self_absorbed_state(tval, f0, nua0, num0, nuc0, k, t0, p):
     fmax_exp, _, _, _ = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
-    nua, num, nuc = _legacy_forward_shock_late_breaks(tval, nua0, num0, nuc0, k, t0, p)
+    nua, num, nuc = _forward_shock_self_absorbed_breaks(tval, nua0, num0, nuc0, k, t0, p)
     return (
         FS_SELF_ABSORBED_SLOW,
         f0 * (tval / t0) ** fmax_exp,
@@ -146,7 +146,7 @@ def forward_shock_flux(ivar, f0, nu0_1, nu0_2, nu0_3, k, t0, jet_break=None, p=2
             )
             result = _forward_shock_spectrum(regime, nuval, fnu_max, nua, num, nuc, p)
         else:
-            regime, fnu_max, nua, num, nuc = _forward_shock_legacy_self_absorbed_state(
+            regime, fnu_max, nua, num, nuc = _forward_shock_self_absorbed_state(
                 tval, f0, nu0_1, nu0_2, nu0_3, k, t0, p
             )
             raw_late = _forward_shock_spectrum(
@@ -165,7 +165,7 @@ def forward_shock_flux(ivar, f0, nu0_1, nu0_2, nu0_3, k, t0, jet_break=None, p=2
                 p,
             )
             _, fmax_late_cross, nua_late_cross, num_late_cross, nuc_late_cross = (
-                _forward_shock_legacy_self_absorbed_state(
+                _forward_shock_self_absorbed_state(
                     t_cross, f0, nu0_1, nu0_2, nu0_3, k, t0, p
                 )
             )
