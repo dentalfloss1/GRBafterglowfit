@@ -1,0 +1,43 @@
+# 🔧 GRB Fit Configuration File
+
+burst:
+  name: GRB220101A
+  t0: 1.0
+  t0_rev: 0.05
+  fitstart: 0.01
+  z: 4.618
+
+data:
+  radio_file: grbmeas.csv
+  other_file: otherdata.txt
+  batxrt_file: xrt.txt
+  xrt_photon_index: 1.62
+  # Unabsorbed flux / observed flux from the XRT spectrum.
+  absorption_ratio: 1.098726
+
+model:
+  type: forward_only   # options: forward_only, forward_reverse
+  k: 2
+  p: 2.2
+
+fit:
+  initial_guess:
+    f0: 1e-3
+    f0_rev: 5e-5
+    nua0_rev: 10
+    nua_0: 13
+    num_0: 100
+    nuc_0: 8e8
+    t_j: 8
+  bounds:
+    # Set lower and upper equal to remove a parameter from fitting.
+    # The fixed value will be the corresponding initial_guess value.
+    f0: [1e-6, 1]
+    f0_rev: [3e-5, 1e5]
+    nua0_rev: [0.1, 1e6]
+    nua_0: [1, 30]
+    num_0: [33, 1e4]
+    nuc_0: [1e5, 1e10]
+    t_j: [1, 20]
+  max_rest_freq: 2.47e6 # GHz, FUV in rest frame, only used in z is defined.
+  fit_xrt: true
