@@ -85,6 +85,48 @@ def _forward_shock_spectrum(regime, nu, fnu_max, nua, num, nuc, p):
     raise ValueError(f"Unsupported forward-shock spectral regime: {regime}")
 
 
+def _forward_shock_initial_regime(nua0, num0, nuc0):
+    if nua0 < num0 < nuc0:
+        return FS_SLOW_COOLING
+    if nua0 < nuc0 < num0:
+        return FS_FAST_COOLING
+    if num0 < nua0 < nuc0:
+        return FS_SELF_ABSORBED_SLOW
+    raise ValueError(
+        "Unsupported forward-shock break ordering at t0. "
+        "Supported adiabatic relativistic orderings are "
+        f"{FS_SLOW_COOLING}, {FS_FAST_COOLING}, and {FS_SELF_ABSORBED_SLOW}; "
+        f"got nu_a={nua0:g}, nu_m={num0:g}, nu_c={nuc0:g}."
+    )
+
+
+def _forward_shock_state_from_reference(
+    tval,
+    t_ref,
+    f_ref,
+    nua_ref,
+    num_ref,
+    nuc_ref,
+    regime,
+    k,
+    p,
+):
+    fmax_exp, ba, bm, bc = _forward_shock_relativistic_indices(k, p, regime)
+    scale = tval / t_ref
+    return (
+        regime,
+        f_ref * scale ** fmax_exp,
+        nua_ref * scale ** ba,
+        num_ref * scale ** bm,
+        nuc_ref * scale ** bc,
+    )
+
+
+def _forward_shock_raw_flux(state, nuval, p):
+    regime, fnu_max, nua, num, nuc = state
+    return _forward_shock_spectrum(regime, nuval, fnu_max, nua, num, nuc, p)
+
+
 def _forward_shock_slow_to_self_absorbed_crossing(nua0, num0, k, t0):
     _, ba, bm, _ = _forward_shock_relativistic_indices(k, 2.2, FS_SLOW_COOLING)
     return t0 * (num0 / nua0) ** (1 / (ba - bm))
@@ -105,19 +147,12 @@ def _forward_shock_self_absorbed_breaks(tval, nua0, num0, nuc0, k, t0, p):
 
 
 def _forward_shock_slow_branch_state(tval, f0, nua0, num0, nuc0, k, t0, p):
-    fmax_exp, ba, bm, bc = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
-    scale = tval / t0
-    return (
-        FS_SLOW_COOLING,
-        f0 * scale ** fmax_exp,
-        nua0 * scale ** ba,
-        num0 * scale ** bm,
-        nuc0 * scale ** bc,
+    return _forward_shock_state_from_reference(
+        tval, t0, f0, nua0, num0, nuc0, FS_SLOW_COOLING, k, p
     )
 
 
 def _forward_shock_self_absorbed_state(tval, f0, nua0, num0, nuc0, k, t0, p):
-    fmax_exp, _, _, _ = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
     nua, num, nuc = _forward_shock_self_absorbed_breaks(tval, nua0, num0, nuc0, k, t0, p)
     return (
         FS_SELF_ABSORBED_SLOW,
@@ -128,6 +163,153 @@ def _forward_shock_self_absorbed_state(tval, f0, nua0, num0, nuc0, k, t0, p):
     )
 
 
+def _forward_shock_slow_flux_with_self_absorption_transition(
+    tval,
+    nuval,
+    t_ref,
+    ref_state,
+    k,
+    p,
+    previous_flux_at_ref=None,
+):
+    _, _, nua_ref, num_ref, _ = ref_state
+    _, ba, bm, _ = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
+    t_am = t_ref * (num_ref / nua_ref) ** (1 / (ba - bm))
+
+    def slow_raw(time):
+        return _forward_shock_state_from_reference(
+            time, t_ref, ref_state[1], ref_state[2], ref_state[3], ref_state[4],
+            FS_SLOW_COOLING, k, p
+        )
+
+    slow_ref_raw = _forward_shock_raw_flux(ref_state, nuval, p)
+    if previous_flux_at_ref is None:
+        previous_flux_at_ref = slow_ref_raw
+
+    if tval <= t_am:
+        current = slow_raw(tval)
+        ref_raw = slow_ref_raw
+        return previous_flux_at_ref * _forward_shock_raw_flux(current, nuval, p) / ref_raw
+
+    slow_cross = slow_raw(t_am)
+    slow_at_cross = (
+        previous_flux_at_ref
+        * _forward_shock_raw_flux(slow_cross, nuval, p)
+        / slow_ref_raw
+    )
+    self_current = _forward_shock_state_from_reference(
+        tval,
+        t_am,
+        slow_cross[1],
+        slow_cross[2],
+        slow_cross[3],
+        slow_cross[4],
+        FS_SELF_ABSORBED_SLOW,
+        k,
+        p,
+    )
+    self_cross = _forward_shock_state_from_reference(
+        t_am,
+        t_am,
+        slow_cross[1],
+        slow_cross[2],
+        slow_cross[3],
+        slow_cross[4],
+        FS_SELF_ABSORBED_SLOW,
+        k,
+        p,
+    )
+    return (
+        slow_at_cross
+        * _forward_shock_raw_flux(self_current, nuval, p)
+        / _forward_shock_raw_flux(self_cross, nuval, p)
+    )
+
+
+def _forward_shock_branch_state(tval, f0, nua0, num0, nuc0, k, t0, p):
+    initial_regime = _forward_shock_initial_regime(nua0, num0, nuc0)
+
+    if initial_regime == FS_FAST_COOLING:
+        _, _, bm, bc = _forward_shock_relativistic_indices(k, p, FS_FAST_COOLING)
+        t_mc = t0 * (num0 / nuc0) ** (1 / (bc - bm))
+        if tval <= t_mc:
+            return _forward_shock_state_from_reference(
+                tval, t0, f0, nua0, num0, nuc0, FS_FAST_COOLING, k, p
+            )
+
+        fast_cross = _forward_shock_state_from_reference(
+            t_mc, t0, f0, nua0, num0, nuc0, FS_FAST_COOLING, k, p
+        )
+        _, _, nua_ref, num_ref, _ = fast_cross
+        _, ba, bm, _ = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
+        t_am = t_mc * (num_ref / nua_ref) ** (1 / (ba - bm))
+        if tval <= t_am:
+            return _forward_shock_state_from_reference(
+                tval,
+                t_mc,
+                fast_cross[1],
+                fast_cross[2],
+                fast_cross[3],
+                fast_cross[4],
+                FS_SLOW_COOLING,
+                k,
+                p,
+            )
+
+        slow_cross = _forward_shock_state_from_reference(
+            t_am,
+            t_mc,
+            fast_cross[1],
+            fast_cross[2],
+            fast_cross[3],
+            fast_cross[4],
+            FS_SLOW_COOLING,
+            k,
+            p,
+        )
+        return _forward_shock_state_from_reference(
+            tval,
+            t_am,
+            slow_cross[1],
+            slow_cross[2],
+            slow_cross[3],
+            slow_cross[4],
+            FS_SELF_ABSORBED_SLOW,
+            k,
+            p,
+        )
+
+    if initial_regime == FS_SLOW_COOLING:
+        _, ba, bm, _ = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
+        t_am = t0 * (num0 / nua0) ** (1 / (ba - bm))
+        if tval <= t_am:
+            return _forward_shock_state_from_reference(
+                tval, t0, f0, nua0, num0, nuc0, FS_SLOW_COOLING, k, p
+            )
+
+        slow_cross = _forward_shock_state_from_reference(
+            t_am, t0, f0, nua0, num0, nuc0, FS_SLOW_COOLING, k, p
+        )
+        return _forward_shock_state_from_reference(
+            tval,
+            t_am,
+            slow_cross[1],
+            slow_cross[2],
+            slow_cross[3],
+            slow_cross[4],
+            FS_SELF_ABSORBED_SLOW,
+            k,
+            p,
+        )
+
+    if initial_regime == FS_SELF_ABSORBED_SLOW:
+        return _forward_shock_state_from_reference(
+            tval, t0, f0, nua0, num0, nuc0, FS_SELF_ABSORBED_SLOW, k, p
+        )
+
+    raise ValueError(f"Unsupported forward-shock spectral regime: {initial_regime}")
+
+
 def forward_shock_flux(ivar, f0, nu0_1, nu0_2, nu0_3, k, t0, jet_break=None, p=2.2):
     if jet_break is not None:
         return _legacy_forward_shock_flux(
@@ -135,50 +317,46 @@ def forward_shock_flux(ivar, f0, nu0_1, nu0_2, nu0_3, k, t0, jet_break=None, p=2
         )
 
     t, nu = ivar
-    _, ba, bm, _ = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
-    t_cross = t0 * (nu0_2 / nu0_1) ** (1 / (ba - bm))
+    initial_regime = _forward_shock_initial_regime(nu0_1, nu0_2, nu0_3)
+    initial_state = (initial_regime, f0, nu0_1, nu0_2, nu0_3)
     results = []
 
     for tval, nuval in zip(t, nu):
-        if tval <= t_cross:
-            regime, fnu_max, nua, num, nuc = _forward_shock_slow_branch_state(
-                tval, f0, nu0_1, nu0_2, nu0_3, k, t0, p
-            )
-            result = _forward_shock_spectrum(regime, nuval, fnu_max, nua, num, nuc, p)
-        else:
-            regime, fnu_max, nua, num, nuc = _forward_shock_self_absorbed_state(
-                tval, f0, nu0_1, nu0_2, nu0_3, k, t0, p
-            )
-            raw_late = _forward_shock_spectrum(
-                regime, nuval, fnu_max, nua, num, nuc, p
-            )
-            _, fmax_cross, nua_cross, num_cross, nuc_cross = _forward_shock_slow_branch_state(
-                t_cross, f0, nu0_1, nu0_2, nu0_3, k, t0, p
-            )
-            old_at_cross = _forward_shock_spectrum(
-                FS_SLOW_COOLING,
-                nuval,
-                fmax_cross,
-                nua_cross,
-                num_cross,
-                nuc_cross,
-                p,
-            )
-            _, fmax_late_cross, nua_late_cross, num_late_cross, nuc_late_cross = (
-                _forward_shock_self_absorbed_state(
-                    t_cross, f0, nu0_1, nu0_2, nu0_3, k, t0, p
+        if initial_regime == FS_FAST_COOLING:
+            _, _, bm, bc = _forward_shock_relativistic_indices(k, p, FS_FAST_COOLING)
+            t_mc = t0 * (nu0_2 / nu0_3) ** (1 / (bc - bm))
+            if tval <= t_mc:
+                state = _forward_shock_state_from_reference(
+                    tval, t0, f0, nu0_1, nu0_2, nu0_3, FS_FAST_COOLING, k, p
                 )
+                result = _forward_shock_raw_flux(state, nuval, p)
+            else:
+                fast_cross = _forward_shock_state_from_reference(
+                    t_mc, t0, f0, nu0_1, nu0_2, nu0_3, FS_FAST_COOLING, k, p
+                )
+                fast_at_cross = _forward_shock_raw_flux(fast_cross, nuval, p)
+                result = _forward_shock_slow_flux_with_self_absorption_transition(
+                    tval, nuval, t_mc, fast_cross, k, p, previous_flux_at_ref=fast_at_cross
+                )
+            results.append(result)
+            continue
+
+        if initial_regime == FS_SLOW_COOLING:
+            result = _forward_shock_slow_flux_with_self_absorption_transition(
+                tval, nuval, t0, initial_state, k, p
             )
-            raw_late_at_cross = _forward_shock_spectrum(
-                FS_SELF_ABSORBED_SLOW,
-                nuval,
-                fmax_late_cross,
-                nua_late_cross,
-                num_late_cross,
-                nuc_late_cross,
-                p,
+            results.append(result)
+            continue
+
+        if initial_regime == FS_SELF_ABSORBED_SLOW:
+            state = _forward_shock_state_from_reference(
+                tval, t0, f0, nu0_1, nu0_2, nu0_3, FS_SELF_ABSORBED_SLOW, k, p
             )
-            result = old_at_cross * raw_late / raw_late_at_cross
+            result = _forward_shock_raw_flux(state, nuval, p)
+            results.append(result)
+            continue
+
+        raise ValueError(f"Unsupported forward-shock spectral regime: {initial_regime}")
         results.append(result)
 
     return np.array(results)
@@ -570,22 +748,18 @@ def forward_shock_break_frequencies(ivar, nua_0, num_0, nuc_0, k, t0, p=2.2):
     """Return FS (nu_a, nu_m, nu_c) at the requested observer times."""
     t, _ = ivar
     t = np.asarray(t)
+    nua = []
+    num = []
+    nuc = []
+    for tval in t:
+        _, _, nua_t, num_t, nuc_t = _forward_shock_branch_state(
+            tval, 1.0, nua_0, num_0, nuc_0, k, t0, p
+        )
+        nua.append(nua_t)
+        num.append(num_t)
+        nuc.append(nuc_t)
 
-    b_nua_early = -3 * k / (5 * (4 - k))
-    b_num = -3 / 2
-    b_nuc = -(4 - 3 * k) / (2 * (4 - k))
-    b_nua_late = -(12 * p + 8 - 3 * p * k + 2 * k) / (2 * (4 - k) * (p + 4))
-
-    t_cross = t0 * (num_0 / nua_0) ** (1 / (b_nua_early - b_num))
-    nu_cross = nua_0 * (t_cross / t0) ** b_nua_early
-
-    nua_early = nua_0 * (t / t0) ** b_nua_early
-    num = num_0 * (t / t0) ** b_num
-    nuc = nuc_0 * (t / t0) ** b_nuc
-    nua_late = nu_cross * (t / t_cross) ** b_nua_late
-    nua = np.where(t <= t_cross, nua_early, nua_late)
-
-    return nua, num, nuc
+    return np.array(nua), np.array(num), np.array(nuc)
 
 
 def forward_shock_absorption_tau(

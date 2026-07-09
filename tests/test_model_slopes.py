@@ -2,7 +2,13 @@ import unittest
 
 import numpy as np
 
-from grbfit.models import dsbpl, forward_shock_flux, reverse_shock, tsbpl
+from grbfit.models import (
+    dsbpl,
+    forward_shock_break_frequencies,
+    forward_shock_flux,
+    reverse_shock,
+    tsbpl,
+)
 
 
 P = 2.2
@@ -97,6 +103,16 @@ def _forward_early_indices(k):
     norm_exp = a_fmax + (b_a - b_m) / 3
     slopes = [2, 1 / 3, -(P - 1) / 2, -P / 2]
     return norm_exp, [b_a, b_m, b_c], slopes
+
+
+def _forward_fast_indices(k):
+    a_fmax = -k / (2 * (4 - k))
+    b_a = -(10 + 3 * k) / (5 * (4 - k))
+    b_m = -3 / 2
+    b_c = -(4 - 3 * k) / (2 * (4 - k))
+    norm_exp = a_fmax + (b_a - b_c) / 3
+    slopes = [2, 1 / 3, -1 / 2, -P / 2]
+    return norm_exp, [b_a, b_c, b_m], slopes
 
 
 def _forward_late_indices(k):
@@ -213,6 +229,45 @@ class ForwardShockSlopeTests(unittest.TestCase):
                     _log_slope(times, flux), expected, delta=0.05
                 )
 
+    def test_fast_cooling_spectral_and_temporal_slopes_match_expected_segments(self):
+        breaks = {"nua0": 1e2, "nuc0": 1e8, "num0": 1e15}
+        freqs = [1.0, 1e5, 1e11, 1e17]
+        times = [T0, 2 * T0]
+        for k in (0, 2):
+            norm_exp, break_exps, slopes = _forward_fast_indices(k)
+            for segment, expected_spectral in enumerate(slopes):
+                freq_pair = [freqs[segment], freqs[segment] * 10]
+                spectral_flux = _forward_flux(
+                    [T0, T0],
+                    freq_pair,
+                    k,
+                    nua0=breaks["nua0"],
+                    num0=breaks["num0"],
+                    nuc0=breaks["nuc0"],
+                )
+                self.assertAlmostEqual(
+                    _log_slope(freq_pair, spectral_flux),
+                    expected_spectral,
+                    delta=0.03,
+                )
+
+                temporal_flux = _forward_flux(
+                    times,
+                    [freqs[segment], freqs[segment]],
+                    k,
+                    nua0=breaks["nua0"],
+                    num0=breaks["num0"],
+                    nuc0=breaks["nuc0"],
+                )
+                expected_temporal = _temporal_slope(
+                    norm_exp, break_exps, slopes, segment
+                )
+                self.assertAlmostEqual(
+                    _log_slope(times, temporal_flux),
+                    expected_temporal,
+                    delta=0.05,
+                )
+
     def test_late_branch_spectral_and_temporal_slopes_match_expected_segments(self):
         for k in (0, 2):
             t_start = 1000 * _forward_transition_time(k)
@@ -261,6 +316,52 @@ class ForwardShockSlopeTests(unittest.TestCase):
             self.assertTrue(np.all(np.isfinite(flux)))
             self.assertTrue(np.all(flux > 0))
             self.assertLess(np.max(flux) / np.min(flux), 1.02)
+
+    def test_forward_shock_fast_to_slow_transition_is_continuous(self):
+        nua0 = 1e2
+        nuc0 = 1e8
+        num0 = 1e15
+        for k in (0, 2):
+            _, _, b_m, b_c = (
+                -k / (2 * (4 - k)),
+                -(10 + 3 * k) / (5 * (4 - k)),
+                -3 / 2,
+                -(4 - 3 * k) / (2 * (4 - k)),
+            )
+            t_cross = T0 * (num0 / nuc0) ** (1 / (b_c - b_m))
+            times = t_cross * np.array([0.999, 1.0, 1.001])
+            flux = _forward_flux(
+                times,
+                np.full_like(times, 1.0),
+                k,
+                nua0=nua0,
+                num0=num0,
+                nuc0=nuc0,
+            )
+            self.assertTrue(np.all(np.isfinite(flux)))
+            self.assertTrue(np.all(flux > 0))
+            self.assertLess(np.max(flux) / np.min(flux), 1.02)
+
+    def test_forward_break_frequencies_support_fast_cooling_transition(self):
+        nua0 = 1e2
+        nuc0 = 1e8
+        num0 = 1e15
+        for k in (0, 2):
+            _, break_exps, _ = _forward_fast_indices(k)
+            times = np.array([T0, 2 * T0])
+            freqs = np.ones_like(times)
+            nua, num, nuc = forward_shock_break_frequencies(
+                (times, freqs), nua0, num0, nuc0, k, T0, p=P
+            )
+            self.assertAlmostEqual(
+                _log_slope(times, nua), break_exps[0], delta=1e-12
+            )
+            self.assertAlmostEqual(
+                _log_slope(times, nuc), break_exps[1], delta=1e-12
+            )
+            self.assertAlmostEqual(
+                _log_slope(times, num), break_exps[2], delta=1e-12
+            )
 
 
 class ReverseShockSlopeTests(unittest.TestCase):
