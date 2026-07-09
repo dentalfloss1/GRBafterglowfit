@@ -6,6 +6,10 @@ RS_SLOW_COOLING = "nu_a < nu_m < nu_c"
 RS_FAST_COOLING = "nu_a < nu_c < nu_m"
 RS_SELF_ABSORBED_SLOW = "nu_m < nu_a < nu_c"
 
+FS_SLOW_COOLING = "nu_a < nu_m < nu_c"
+FS_FAST_COOLING = "nu_a < nu_c < nu_m"
+FS_SELF_ABSORBED_SLOW = "nu_m < nu_a < nu_c"
+
 
 def dsbpl(x,A,xb1,alpha1,alpha2,xb2,alpha3,s=0.2):
     """
@@ -41,7 +45,146 @@ def tsbpl(x, A, xb1, xb2, xb3, alpha1, alpha2, alpha3, alpha4, s=0.2):
 
     return A * term1 * smooth1 * smooth2 * smooth3
 
-def forward_shock_flux(ivar, f0, nu0_1, nu0_2,nu0_3, k, t0,jet_break=None, p=2.2):
+
+def _forward_shock_relativistic_indices(k, p, regime):
+    """Adiabatic ultra-relativistic FS temporal indices from van der Horst Table 2.10."""
+    fmax = -k / (2 * (4 - k))
+    num = -3 / 2
+    nuc = -(4 - 3 * k) / (2 * (4 - k))
+
+    if regime == FS_FAST_COOLING:
+        nua = -(10 + 3 * k) / (5 * (4 - k))
+    elif regime == FS_SLOW_COOLING:
+        nua = -3 * k / (5 * (4 - k))
+    elif regime == FS_SELF_ABSORBED_SLOW:
+        nua = -(
+            12 * p + 8 - 3 * p * k + 2 * k
+        ) / (2 * (4 - k) * (p + 4))
+    else:
+        raise ValueError(f"Unsupported forward-shock spectral regime: {regime}")
+
+    return fmax, nua, num, nuc
+
+
+def _forward_shock_spectrum(regime, nu, fnu_max, nua, num, nuc, p):
+    if regime == FS_SLOW_COOLING:
+        # nu_a < nu_m < nu_c
+        f_at_nua = fnu_max * (nua / num) ** (1 / 3)
+        return tsbpl(nu, f_at_nua, nua, num, nuc, 2, 1 / 3, -(p - 1) / 2, -p / 2)
+
+    if regime == FS_FAST_COOLING:
+        # nu_a < nu_c < nu_m
+        f_at_nua = fnu_max * (nua / nuc) ** (1 / 3)
+        return tsbpl(nu, f_at_nua, nua, nuc, num, 2, 1 / 3, -1 / 2, -p / 2)
+
+    if regime == FS_SELF_ABSORBED_SLOW:
+        # nu_m < nu_a < nu_c
+        f_at_num = fnu_max * (num / nua) ** 3
+        return tsbpl(nu, f_at_num, num, nua, nuc, 2, 5 / 2, -(p - 1) / 2, -p / 2)
+
+    raise ValueError(f"Unsupported forward-shock spectral regime: {regime}")
+
+
+def _forward_shock_slow_to_self_absorbed_crossing(nua0, num0, k, t0):
+    _, ba, bm, _ = _forward_shock_relativistic_indices(k, 2.2, FS_SLOW_COOLING)
+    return t0 * (num0 / nua0) ** (1 / (ba - bm))
+
+
+def _legacy_forward_shock_late_breaks(tval, nua0, num0, nuc0, k, t0, p):
+    """Current late-branch break normalization, retained for the structure-only refactor."""
+    _, ba_early, bm, bc = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
+    _, ba_late, _, _ = _forward_shock_relativistic_indices(k, p, FS_SELF_ABSORBED_SLOW)
+    t_cross = t0 * (num0 / nua0) ** (1 / (ba_early - bm))
+    nu_cross = nua0 * (t_cross / t0) ** ba_early
+    nuc_cross = nuc0 * (t_cross / t0) ** bc
+    return (
+        nu_cross * (tval / t0) ** ba_late,
+        nu_cross * (tval / t0) ** bm,
+        nuc_cross * (tval / t0) ** bc,
+    )
+
+
+def _forward_shock_slow_branch_state(tval, f0, nua0, num0, nuc0, k, t0, p):
+    fmax_exp, ba, bm, bc = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
+    scale = tval / t0
+    return (
+        FS_SLOW_COOLING,
+        f0 * scale ** fmax_exp,
+        nua0 * scale ** ba,
+        num0 * scale ** bm,
+        nuc0 * scale ** bc,
+    )
+
+
+def _forward_shock_legacy_self_absorbed_state(tval, f0, nua0, num0, nuc0, k, t0, p):
+    fmax_exp, _, _, _ = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
+    nua, num, nuc = _legacy_forward_shock_late_breaks(tval, nua0, num0, nuc0, k, t0, p)
+    return (
+        FS_SELF_ABSORBED_SLOW,
+        f0 * (tval / t0) ** fmax_exp,
+        nua,
+        num,
+        nuc,
+    )
+
+
+def forward_shock_flux(ivar, f0, nu0_1, nu0_2, nu0_3, k, t0, jet_break=None, p=2.2):
+    if jet_break is not None:
+        return _legacy_forward_shock_flux(
+            ivar, f0, nu0_1, nu0_2, nu0_3, k, t0, jet_break=jet_break, p=p
+        )
+
+    t, nu = ivar
+    _, ba, bm, _ = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
+    t_cross = t0 * (nu0_2 / nu0_1) ** (1 / (ba - bm))
+    results = []
+
+    for tval, nuval in zip(t, nu):
+        if tval <= t_cross:
+            regime, fnu_max, nua, num, nuc = _forward_shock_slow_branch_state(
+                tval, f0, nu0_1, nu0_2, nu0_3, k, t0, p
+            )
+            result = _forward_shock_spectrum(regime, nuval, fnu_max, nua, num, nuc, p)
+        else:
+            regime, fnu_max, nua, num, nuc = _forward_shock_legacy_self_absorbed_state(
+                tval, f0, nu0_1, nu0_2, nu0_3, k, t0, p
+            )
+            raw_late = _forward_shock_spectrum(
+                regime, nuval, fnu_max, nua, num, nuc, p
+            )
+            _, fmax_cross, nua_cross, num_cross, nuc_cross = _forward_shock_slow_branch_state(
+                t_cross, f0, nu0_1, nu0_2, nu0_3, k, t0, p
+            )
+            old_at_cross = _forward_shock_spectrum(
+                FS_SLOW_COOLING,
+                nuval,
+                fmax_cross,
+                nua_cross,
+                num_cross,
+                nuc_cross,
+                p,
+            )
+            _, fmax_late_cross, nua_late_cross, num_late_cross, nuc_late_cross = (
+                _forward_shock_legacy_self_absorbed_state(
+                    t_cross, f0, nu0_1, nu0_2, nu0_3, k, t0, p
+                )
+            )
+            raw_late_at_cross = _forward_shock_spectrum(
+                FS_SELF_ABSORBED_SLOW,
+                nuval,
+                fmax_late_cross,
+                nua_late_cross,
+                num_late_cross,
+                nuc_late_cross,
+                p,
+            )
+            result = old_at_cross * raw_late / raw_late_at_cross
+        results.append(result)
+
+    return np.array(results)
+
+
+def _legacy_forward_shock_flux(ivar, f0, nu0_1, nu0_2,nu0_3, k, t0,jet_break=None, p=2.2):
     
     d=0.1
     s = 10
