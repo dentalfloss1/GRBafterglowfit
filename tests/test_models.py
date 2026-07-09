@@ -128,6 +128,32 @@ class ReverseShockRegimeTests(unittest.TestCase):
 
         self.assertLess(np.max(flux) / np.min(flux), 1.01)
 
+    def test_self_absorbed_reverse_shock_crosses_to_slow_cooling_at_earlier_times(self):
+        k = 2
+        p = 2.2
+        t0 = 0.05
+        f0 = 1e-3
+        nua0 = 33.0
+        num0 = 31.0
+        nuc0 = 8e8
+        ba_self = -(
+            p * (73 - 14 * k) + 2 * (67 - 14 * k)
+        ) / (12 * (4 - k) * (p + 4))
+        bm = -(73 - 14 * k) / (12 * (4 - k))
+        t_cross = t0 * (num0 / nua0) ** (1 / (ba_self - bm))
+
+        times = t_cross * np.array([0.999, 1.0, 1.001])
+        freqs = np.full_like(times, 9.0)
+        flux, breaks = reverse_shock(
+            (times, freqs), f0, nua0, num0, nuc0, k, t0, p=p, givenuvals=True
+        )
+
+        self.assertLess(breaks[0, 1], breaks[0, 2])
+        self.assertLess(breaks[2, 2], breaks[2, 1])
+        self.assertTrue(np.all(np.isfinite(flux)))
+        self.assertTrue(np.all(flux > 0))
+        self.assertLess(np.max(flux) / np.min(flux), 1.01)
+
     def test_supported_regimes_have_expected_asymptotic_slopes(self):
         k = 2
         p = 2.2

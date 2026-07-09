@@ -676,22 +676,33 @@ def _reverse_shock_branch_state(tval, f0, nua0, num0, nuc0, k, t0_rev, p):
             None,
         )
 
-    scale = tval / t0_rev
-    nua = nua0 * scale ** ba_i
-    num = num0 * scale ** bm_i
-    nuc = nuc0 * scale ** bc_i
-    if not (num < nua < nuc):
-        raise ValueError(
-            "Unsupported reverse-shock break ordering for self-absorbed "
-            f"slow-cooling branch: nu_m={num:g}, nu_a={nua:g}, nu_c={nuc:g}."
+    t_am = _crossing_time(t0_rev, nua0, num0, ba_i, bm_i)
+    if tval >= t_am:
+        scale = tval / t0_rev
+        return (
+            initial_regime,
+            f0 * scale ** fmax_i,
+            nua0 * scale ** ba_i,
+            num0 * scale ** bm_i,
+            nuc0 * scale ** bc_i,
+            None,
         )
+
+    fmax_s, ba_s, bm_s, bc_s = _reverse_shock_thick_shell_indices(
+        k, p, RS_SLOW_COOLING
+    )
+    scale_cross = t_am / t0_rev
+    fmax_cross = f0 * scale_cross ** fmax_i
+    nu_cross = nua0 * scale_cross ** ba_i
+    nuc_cross = nuc0 * scale_cross ** bc_i
+    scale = tval / t_am
     return (
-        initial_regime,
-        f0 * scale ** fmax_i,
-        nua,
-        num,
-        nuc,
-        None,
+        RS_SLOW_COOLING,
+        fmax_cross * scale ** fmax_s,
+        nu_cross * scale ** ba_s,
+        nu_cross * scale ** bm_s,
+        nuc_cross * scale ** bc_s,
+        (initial_regime, t_am),
     )
 
 
