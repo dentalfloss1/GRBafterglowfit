@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "grbfit"
 version = "0.1.0"
 description = "GRB afterglow fitting with MCMC"
-authors = [{ name = "Your Name" }]
+authors = [{ name = "Sarah Chastain" }]
 readme = "README.md"
 requires-python = ">=3.9"
 
