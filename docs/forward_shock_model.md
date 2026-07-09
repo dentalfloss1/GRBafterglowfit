@@ -159,3 +159,22 @@ legacy jet implementation. This preserves existing jet behavior while
 the non-jet adiabatic relativistic path is refactored and tested.
 
 Jet-branch cleanup should be handled as a separate physics change.
+
+## Reverse-Shock Absorption
+
+For `model.type: forward_reverse`, the forward-shock absorption screen
+for reverse-shock photons is optional. By default it is not applied:
+
+```yaml
+model:
+  apply_fs_absorption: false
+```
+
+Set `apply_fs_absorption: true` to evaluate:
+
+```text
+F_total(t, nu) = F_FS(t, nu) + F_RS(t, nu) * exp[-tau_FS(t, nu)]
+```
+
+When omitted from older config files, `apply_fs_absorption` is treated
+as `false`.

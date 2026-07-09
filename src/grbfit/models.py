@@ -805,10 +805,13 @@ def forward_reverse_model(
     f0, f0_rev,
     nua0_rev, num0_rev, nuc0_rev,
     nua_0, num_0, nuc_0,
-    k, t0, t0_rev, p, t_j=None
+    k, t0, t0_rev, p, t_j=None, apply_fs_absorption=False
 ):
     fwd = forward_shock_flux(ivar, f0, nua_0, num_0, nuc_0, k, t0, jet_break=t_j, p=p)
     rev = reverse_shock(ivar, f0_rev, nua0_rev, num0_rev, nuc0_rev, k, t0_rev, p)
+    if not apply_fs_absorption:
+        return fwd + rev
+
     tau_abs_fs = forward_shock_absorption_tau(ivar, nua_0, num_0, nuc_0, k, t0, p=p)
     return fwd + rev * np.exp(-tau_abs_fs)
 

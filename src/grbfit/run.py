@@ -45,6 +45,9 @@ data:
 
 model:
   type: forward_only   # options: forward_only, forward_reverse
+  # If true, attenuate reverse-shock photons by the forward-shock absorption screen.
+  # Defaults to false when omitted.
+  apply_fs_absorption: false
   k: 2
   p: 2.2
 

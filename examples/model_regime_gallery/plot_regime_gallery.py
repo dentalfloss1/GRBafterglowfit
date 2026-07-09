@@ -35,6 +35,7 @@ F0 = 1e-3
 F0_REV = 8e-4
 T0 = 1.0
 T0_REV = 0.05
+LIGHT_CURVE_FREQUENCIES_GHZ = (1.0, 10.0, 100.0, 1000.0)
 
 
 @dataclass(frozen=True)
@@ -105,8 +106,8 @@ def _format_slope_label(label: str, p: float) -> str:
     return rf"$\beta={label}={_format_number(value)}$"
 
 
-def _format_temporal_label(value: float) -> str:
-    return rf"$\alpha={_format_number(value)}$"
+def _format_frequency_label(freq: float) -> str:
+    return rf"{freq:g} GHz"
 
 
 def _ordered_breaks(case: RegimeCase) -> list[float]:
@@ -194,12 +195,18 @@ def _shock_flux(
     raise ValueError(f"Unsupported shock: {shock}")
 
 
-def _fs_absorption_factor(times: np.ndarray, freqs: np.ndarray, k: int, p: float) -> np.ndarray:
+def _fs_absorption_factor(
+    times: np.ndarray,
+    freqs: np.ndarray,
+    k: int,
+    p: float,
+    fs_breaks: dict[str, float],
+) -> np.ndarray:
     tau = forward_shock_absorption_tau(
         (times, freqs),
-        1e4,
-        1e8,
-        1e12,
+        fs_breaks["nua"],
+        fs_breaks["num"],
+        fs_breaks["nuc"],
         k,
         T0,
         p=p,
@@ -224,7 +231,7 @@ def _plot_fs_absorption_factor(p: float, n_points: int) -> plt.Figure:
             times = np.full_like(freqs, tval)
             tau = forward_shock_absorption_tau(
                 (times, freqs),
-                1e4,
+                1e3,
                 1e8,
                 1e12,
                 k,
@@ -239,7 +246,7 @@ def _plot_fs_absorption_factor(p: float, n_points: int) -> plt.Figure:
 
         ref_breaks = forward_shock_break_frequencies(
             (np.array([T0]), np.array([1.0])),
-            1e4,
+            1e3,
             1e8,
             1e12,
             k,
@@ -274,72 +281,6 @@ def _plot_fs_absorption_factor(p: float, n_points: int) -> plt.Figure:
     axes[0, 0].legend(fontsize=7, loc="best")
     fig.tight_layout()
     return fig
-
-
-def _temporal_exponents(shock: str, case: RegimeCase, k: int, p: float) -> tuple[float, list[float]]:
-    if shock == "fs":
-        fmax = -k / (2.0 * (4.0 - k))
-        bm = -1.5
-        bc = -(4.0 - 3.0 * k) / (2.0 * (4.0 - k))
-        if case.key == "slow":
-            ba = -3.0 * k / (5.0 * (4.0 - k))
-            norm = fmax + (ba - bm) / 3.0
-            return norm, [ba, bm, bc]
-        if case.key == "fast":
-            ba = -(10.0 + 3.0 * k) / (5.0 * (4.0 - k))
-            norm = fmax + (ba - bc) / 3.0
-            return norm, [ba, bc, bm]
-        if case.key == "self_absorbed":
-            ba = -(12.0 * p + 8.0 - 3.0 * p * k + 2.0 * k) / (
-                2.0 * (4.0 - k) * (p + 4.0)
-            )
-            norm = fmax + 3.0 * (bm - ba)
-            return norm, [bm, ba, bc]
-
-    if shock == "rs":
-        fmax = -(47.0 - 10.0 * k) / (12.0 * (4.0 - k))
-        bm = -(73.0 - 14.0 * k) / (12.0 * (4.0 - k))
-        bc = bm
-        if case.key in ("slow", "fast"):
-            ba = -(32.0 - 7.0 * k) / (15.0 * (4.0 - k))
-        else:
-            ba = -(p * (73.0 - 14.0 * k) + 2.0 * (67.0 - 14.0 * k)) / (
-                12.0 * (4.0 - k) * (p + 4.0)
-            )
-
-        if case.key == "slow":
-            norm = fmax + (ba - bm) / 3.0
-            return norm, [ba, bm, bc]
-        if case.key == "fast":
-            norm = fmax + (ba - bc) / 3.0
-            return norm, [ba, bc, bm]
-        if case.key == "self_absorbed":
-            norm = fmax + 3.0 * (bm - ba)
-            return norm, [bm, ba, bc]
-
-    raise ValueError(f"Unsupported shock/regime: {shock}/{case.key}")
-
-
-def _temporal_slope(norm_exp: float, break_exps: list[float], slopes: list[float], segment: int) -> float:
-    if segment == 0:
-        return norm_exp - slopes[0] * break_exps[0]
-    if segment == 1:
-        return norm_exp - slopes[1] * break_exps[0]
-    if segment == 2:
-        return norm_exp + slopes[1] * (break_exps[1] - break_exps[0]) - slopes[2] * break_exps[1]
-    if segment == 3:
-        return (
-            norm_exp
-            + slopes[1] * (break_exps[1] - break_exps[0])
-            + slopes[2] * (break_exps[2] - break_exps[1])
-            - slopes[3] * break_exps[2]
-        )
-    raise ValueError(f"Unsupported segment: {segment}")
-
-
-def _segment_frequencies(case: RegimeCase) -> list[float]:
-    xb1, xb2, xb3 = _ordered_breaks(case)
-    return [xb1 / 100.0, np.sqrt(xb1 * xb2), np.sqrt(xb2 * xb3), xb3 * 100.0]
 
 
 def _draw_break_lines(ax: plt.Axes, case: RegimeCase) -> None:
@@ -402,7 +343,7 @@ def _plot_spectra(shock: str, p: float, n_points: int) -> plt.Figure:
 
             ax.loglog(freqs, model, color="tab:blue", lw=2.0, label="smooth model")
             if shock == "rs":
-                absorbed = model * _fs_absorption_factor(times, freqs, k, p)
+                absorbed = model * _fs_absorption_factor(times, freqs, k, p, case.breaks)
                 ax.loglog(freqs, absorbed, color="tab:red", lw=1.8, label=r"RS $\times e^{-\tau_{\rm FS}}$")
             ax.loglog(
                 freqs,
@@ -438,35 +379,26 @@ def _plot_light_curves(shock: str, p: float, n_points: int) -> plt.Figure:
         for col, case in enumerate(REGIME_CASES):
             ax = axes[row, col]
             tref = T0 if shock == "fs" else T0_REV
-            times = tref * np.geomspace(0.3, 3.0, n_points)
-            norm_exp, break_exps = _temporal_exponents(shock, case, k, p)
-            spectral_slopes = [_slope_value(label, p) for label in case.spectral_slopes]
+            times = tref * np.geomspace(0.01, 1000.0, n_points)
             baseline = []
 
-            for idx, freq in enumerate(_segment_frequencies(case)):
+            for idx, freq in enumerate(LIGHT_CURVE_FREQUENCIES_GHZ):
                 freqs = np.full_like(times, freq)
                 model = _shock_flux(shock, case, times, freqs, k, p)
-                if shock == "rs":
-                    absorbed = model * _fs_absorption_factor(times, freqs, k, p)
-                    ax.loglog(times, absorbed, lw=1.2, ls=":", alpha=0.9, color=f"C{idx}")
-                    display_model = model
-                else:
-                    display_model = model
-                baseline.append(display_model)
+                baseline.append(model)
+                label = _format_frequency_label(freq)
+                ax.loglog(times, model, color=f"C{idx}", lw=1.9, label=label)
 
-                alpha = _temporal_slope(norm_exp, break_exps, spectral_slopes, idx)
-                ref_flux = np.interp(tref, times, display_model)
-                guide = ref_flux * (times / tref) ** alpha
-                baseline.append(guide)
-                label = rf"{freq:.2g}: {_format_temporal_label(alpha)}"
-                ax.loglog(times, display_model, color=f"C{idx}", lw=1.8, label=label)
-                ax.loglog(times, guide, color=f"C{idx}", lw=1.0, ls="--")
+                if shock == "rs":
+                    absorbed = model * _fs_absorption_factor(times, freqs, k, p, case.breaks)
+                    baseline.append(absorbed)
+                    ax.loglog(times, absorbed, lw=1.2, ls=":", alpha=0.9, color=f"C{idx}")
 
             if shock == "rs":
                 ax.text(
                     0.04,
                     0.05,
-                    r"solid: raw RS; dotted: RS $\times e^{-\tau_{\rm FS}}$; dashed: guide",
+                    r"solid: raw RS; dotted: RS $\times e^{-\tau_{\rm FS}}$",
                     transform=ax.transAxes,
                     fontsize=8,
                     color="0.35",
@@ -474,6 +406,7 @@ def _plot_light_curves(shock: str, p: float, n_points: int) -> plt.Figure:
             ax.set_title(f"k={k}, {case.title}")
             ax.set_xlabel("Time")
             ax.set_ylabel("Flux density")
+            ax.grid(True, which="both", alpha=0.2)
             baseline_values = np.concatenate(baseline)
             baseline_values = baseline_values[
                 np.isfinite(baseline_values) & (baseline_values > 0)

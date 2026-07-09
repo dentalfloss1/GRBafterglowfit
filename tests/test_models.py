@@ -3,8 +3,10 @@ import unittest
 import numpy as np
 
 from grbfit.models import (
+    forward_reverse_model,
     forward_shock_absorption_tau,
     forward_shock_break_frequencies,
+    forward_shock_flux,
     reverse_shock,
     reverse_shock_break_frequencies,
 )
@@ -77,6 +79,103 @@ class ForwardShockAbsorptionTests(unittest.TestCase):
 
         np.testing.assert_allclose(tau[0], low_expected, rtol=1e-8)
         np.testing.assert_allclose(tau[1], high_expected, rtol=1e-8)
+
+
+class ForwardReverseModelAbsorptionTests(unittest.TestCase):
+    def test_forward_reverse_model_does_not_absorb_reverse_shock_by_default(self):
+        times = np.array([1.0, 1.0])
+        freqs = np.array([1.0, 1000.0])
+        ivar = (times, freqs)
+        params = {
+            "f0": 1e-3,
+            "f0_rev": 8e-4,
+            "nua0_rev": 10.0,
+            "num0_rev": 1e4,
+            "nuc0_rev": 1e8,
+            "nua_0": 100.0,
+            "num_0": 1e6,
+            "nuc_0": 1e10,
+            "k": 2,
+            "t0": 1.0,
+            "t0_rev": 0.05,
+            "p": 2.2,
+        }
+
+        combined = forward_reverse_model(ivar, **params)
+        forward = forward_shock_flux(
+            ivar,
+            params["f0"],
+            params["nua_0"],
+            params["num_0"],
+            params["nuc_0"],
+            params["k"],
+            params["t0"],
+            p=params["p"],
+        )
+        reverse = reverse_shock(
+            ivar,
+            params["f0_rev"],
+            params["nua0_rev"],
+            params["num0_rev"],
+            params["nuc0_rev"],
+            params["k"],
+            params["t0_rev"],
+            p=params["p"],
+        )
+
+        np.testing.assert_allclose(combined, forward + reverse)
+
+    def test_forward_reverse_model_can_apply_forward_shock_absorption(self):
+        times = np.array([1.0, 1.0])
+        freqs = np.array([1.0, 1000.0])
+        ivar = (times, freqs)
+        params = {
+            "f0": 1e-3,
+            "f0_rev": 8e-4,
+            "nua0_rev": 10.0,
+            "num0_rev": 1e4,
+            "nuc0_rev": 1e8,
+            "nua_0": 100.0,
+            "num_0": 1e6,
+            "nuc_0": 1e10,
+            "k": 2,
+            "t0": 1.0,
+            "t0_rev": 0.05,
+            "p": 2.2,
+        }
+
+        combined = forward_reverse_model(ivar, **params, apply_fs_absorption=True)
+        forward = forward_shock_flux(
+            ivar,
+            params["f0"],
+            params["nua_0"],
+            params["num_0"],
+            params["nuc_0"],
+            params["k"],
+            params["t0"],
+            p=params["p"],
+        )
+        reverse = reverse_shock(
+            ivar,
+            params["f0_rev"],
+            params["nua0_rev"],
+            params["num0_rev"],
+            params["nuc0_rev"],
+            params["k"],
+            params["t0_rev"],
+            p=params["p"],
+        )
+        tau = forward_shock_absorption_tau(
+            ivar,
+            params["nua_0"],
+            params["num_0"],
+            params["nuc_0"],
+            params["k"],
+            params["t0"],
+            p=params["p"],
+        )
+
+        np.testing.assert_allclose(combined, forward + reverse * np.exp(-tau))
 
 
 class ReverseShockRegimeTests(unittest.TestCase):

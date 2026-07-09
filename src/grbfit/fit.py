@@ -162,6 +162,7 @@ def evaluate_model_components(cfg, theta, ivar):
     p = cfg["model"]["p"]
     t0 = cfg["burst"]["t0"]
     t_j = params.get("t_j", None)
+    apply_fs_absorption = cfg["model"].get("apply_fs_absorption", False)
 
     forward = forward_shock_flux(
         ivar,
@@ -189,16 +190,18 @@ def evaluate_model_components(cfg, theta, ivar):
             cfg["burst"]["t0_rev"],
             p,
         )
-        tau_abs_fs = forward_shock_absorption_tau(
-            ivar,
-            params["nua_0"],
-            params["num_0"],
-            params["nuc_0"],
-            k,
-            t0,
-            p=p,
-        )
-        reverse_observed = reverse_intrinsic * np.exp(-tau_abs_fs)
+        reverse_observed = reverse_intrinsic
+        if apply_fs_absorption:
+            tau_abs_fs = forward_shock_absorption_tau(
+                ivar,
+                params["nua_0"],
+                params["num_0"],
+                params["nuc_0"],
+                k,
+                t0,
+                p=p,
+            )
+            reverse_observed = reverse_intrinsic * np.exp(-tau_abs_fs)
         total = forward + reverse_observed
 
     return {
@@ -212,6 +215,7 @@ def make_model(cfg):
     p = cfg["model"]["p"]
     t0 = cfg["burst"]["t0"]
     t0_rev = cfg["burst"]["t0_rev"]
+    apply_fs_absorption = cfg["model"].get("apply_fs_absorption", False)
 
     if cfg["model"]["type"] == "forward_only":
         def model(theta, ivar):
@@ -247,6 +251,7 @@ def make_model(cfg):
                 cfg["burst"]["t0_rev"],
                 cfg["model"]["p"],
                 t_j=params.get("t_j", None),
+                apply_fs_absorption=apply_fs_absorption,
             )
     return model
 
