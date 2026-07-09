@@ -899,6 +899,8 @@ def main():
         cfg = yaml.safe_load(f)
     cfg = normalize_config(cfg)
     print("📄 Config loaded")
+    if cfg["model"]["type"] == "forward_reverse":
+        print("⚠️ Reverse-shock model assumes a thick-shell reverse shock.")
     # 📥 load + prep data
     df = load_data(cfg)
     print(f"📊 Loaded {len(df)} data points")
