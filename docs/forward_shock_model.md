@@ -154,11 +154,36 @@ correction that changes the late-branch spectral slopes.
 
 ## Jet Branch
 
-If `t_j` is supplied, `forward_shock_flux` currently delegates to the
-legacy jet implementation. This preserves existing jet behavior while
-the non-jet adiabatic relativistic path is refactored and tested.
+If `t_j` is supplied, the jet break is handled as another event in the
+same reference-time evolution used for spectral transitions. The break
+values and `Fnu,max` are evolved to `t_j` with the active pre-jet
+indices, then the post-jet temporal indices are applied from `t_j`
+forward.
 
-Jet-branch cleanup should be handled as a separate physics change.
+For low-absorption branches, `nu_a < nu_m < nu_c` and
+`nu_a < nu_c < nu_m`, the post-jet temporal indices are:
+
+```text
+Fnu,max: -1
+nu_a:    -1/5
+nu_m:    -2
+nu_c:     0
+```
+
+For the self-absorbed slow-cooling branch, `nu_m < nu_a < nu_c`, the
+post-jet temporal indices are:
+
+```text
+Fnu,max: -1
+nu_a:    -2(p + 1) / (p + 4)
+nu_m:    -2
+nu_c:     0
+```
+
+If `nu_a` and `nu_m` cross after the jet break, the crossing time is
+computed from the break values at `t_j`, not from the original `t0`
+normalization. The self-absorbed branch is then anchored at that
+physical crossing.
 
 ## Reverse-Shock Absorption
 

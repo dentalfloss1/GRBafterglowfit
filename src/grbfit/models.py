@@ -64,6 +64,28 @@ def _forward_shock_relativistic_indices(k, p, regime):
     return fmax, nua, num, nuc
 
 
+def _forward_shock_jet_indices(k, p, regime):
+    """Post-jet temporal indices used by the legacy forward-shock implementation."""
+    fmax = -1
+    num = -2
+    nuc = 0
+
+    if regime in (FS_FAST_COOLING, FS_SLOW_COOLING):
+        nua = -1 / 5
+    elif regime == FS_SELF_ABSORBED_SLOW:
+        nua = -(2 * (p + 1)) / (p + 4)
+    else:
+        raise ValueError(f"Unsupported forward-shock spectral regime: {regime}")
+
+    return fmax, nua, num, nuc
+
+
+def _forward_shock_temporal_indices(k, p, regime, jet_phase=False):
+    if jet_phase:
+        return _forward_shock_jet_indices(k, p, regime)
+    return _forward_shock_relativistic_indices(k, p, regime)
+
+
 def _forward_shock_spectrum(regime, nu, fnu_max, nua, num, nuc, p):
     if regime == FS_SLOW_COOLING:
         # nu_a < nu_m < nu_c
@@ -98,8 +120,10 @@ def _forward_shock_initial_regime(nua0, num0, nuc0):
     )
 
 
-def _forward_shock_state_evolve_from_tref(tval, t_ref, f_ref, nua_ref, num_ref, nuc_ref, regime, k, p):
-    fmax_exp, ba, bm, bc = _forward_shock_relativistic_indices(k, p, regime)
+def _forward_shock_state_evolve_from_tref(
+    tval, t_ref, f_ref, nua_ref, num_ref, nuc_ref, regime, k, p, jet_phase=False
+):
+    fmax_exp, ba, bm, bc = _forward_shock_temporal_indices(k, p, regime, jet_phase=jet_phase)
     scale = tval / t_ref
     return (
         regime,
@@ -115,366 +139,121 @@ def _forward_shock_raw_flux(state, nuval, p):
     return _forward_shock_spectrum(regime, nuval, fnu_max, nua, num, nuc, p)
 
 
-def _forward_shock_slow_to_self_absorbed_crossing(nua0, num0, k, t0):
-    _, ba, bm, _ = _forward_shock_relativistic_indices(k, 2.2, FS_SLOW_COOLING)
-    return t0 * (num0 / nua0) ** (1 / (ba - bm))
+def _future_crossing_time(t_ref, nu_left, nu_right, b_left, b_right):
+    if b_left == b_right or nu_left <= 0 or nu_right <= 0:
+        return None
+    t_cross = t_ref * (nu_right / nu_left) ** (1 / (b_left - b_right))
+    if not np.isfinite(t_cross) or t_cross <= t_ref * (1 + 1e-12):
+        return None
+    return t_cross
 
 
-def _forward_shock_self_absorbed_breaks(tval, nua0, num0, nuc0, k, t0, p):
-    """Late slow-cooling FS breaks scaled from the physical nu_a/nu_m crossing."""
-    _, ba_early, bm, bc = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
-    _, ba_late, _, _ = _forward_shock_relativistic_indices(k, p, FS_SELF_ABSORBED_SLOW)
-    t_cross = t0 * (num0 / nua0) ** (1 / (ba_early - bm))
-    nu_cross = nua0 * (t_cross / t0) ** ba_early
-    nuc_cross = nuc0 * (t_cross / t0) ** bc
-    return (
-        nu_cross * (tval / t_cross) ** ba_late,
-        nu_cross * (tval / t_cross) ** bm,
-        nuc_cross * (tval / t_cross) ** bc,
-    )
+def _forward_shock_next_spectral_transition(t_ref, state, k, p, jet_phase):
+    regime, _, nua, num, nuc = state
+    _, ba, bm, bc = _forward_shock_temporal_indices(k, p, regime, jet_phase=jet_phase)
+
+    if regime == FS_FAST_COOLING:
+        t_cross = _future_crossing_time(t_ref, num, nuc, bm, bc)
+        return t_cross, FS_SLOW_COOLING
+
+    if regime == FS_SLOW_COOLING:
+        t_cross = _future_crossing_time(t_ref, nua, num, ba, bm)
+        return t_cross, FS_SELF_ABSORBED_SLOW
+
+    return None, None
 
 
-def _forward_shock_slow_branch_state(tval, f0, nua0, num0, nuc0, k, t0, p):
-    return _forward_shock_state_evolve_from_tref(tval, t0, f0, nua0, num0, nuc0, FS_SLOW_COOLING, k, p)
+def _forward_shock_next_event(t_ref, state, k, p, jet_break, jet_phase):
+    event_time = None
+    event_kind = None
+    event_regime = None
+
+    if jet_break is not None and not jet_phase and jet_break > t_ref * (1 + 1e-12):
+        event_time = jet_break
+        event_kind = "jet"
+
+    transition_time, transition_regime = _forward_shock_next_spectral_transition(t_ref, state, k, p, jet_phase)
+    if transition_time is not None and (event_time is None or transition_time < event_time):
+        event_time = transition_time
+        event_kind = "spectral"
+        event_regime = transition_regime
+
+    return event_time, event_kind, event_regime
 
 
-def _forward_shock_self_absorbed_state(tval, f0, nua0, num0, nuc0, k, t0, p):
-    nua, num, nuc = _forward_shock_self_absorbed_breaks(tval, nua0, num0, nuc0, k, t0, p)
-    return (
-        FS_SELF_ABSORBED_SLOW,
-        f0 * (tval / t0) ** fmax_exp,
-        nua,
-        num,
-        nuc,
-    )
+def _forward_shock_initial_state(f0, nua0, num0, nuc0, jet_break, k, t0, p):
+    initial_regime = _forward_shock_initial_regime(nua0, num0, nuc0)
+    initial_jet_phase = jet_break is not None and jet_break <= t0
+    return (initial_regime, f0, nua0, num0, nuc0), initial_jet_phase
 
 
-def _forward_shock_slow_flux_with_self_absorption_transition(
-    tval,
-    nuval,
-    t_ref,
-    ref_state,
-    k,
-    p,
-    previous_flux_at_ref=None,
-):
-    _, _, nua_ref, num_ref, _ = ref_state
-    _, ba, bm, _ = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
-    t_am = t_ref * (num_ref / nua_ref) ** (1 / (ba - bm))
+def _forward_shock_branch_state(tval, f0, nua0, num0, nuc0, k, t0, p, jet_break=None):
+    state, jet_phase = _forward_shock_initial_state(f0, nua0, num0, nuc0, jet_break, k, t0, p)
+    t_ref = t0
 
-    def slow_raw(time):
+    if tval <= t_ref:
         return _forward_shock_state_evolve_from_tref(
-            time, t_ref, ref_state[1], ref_state[2], ref_state[3], ref_state[4], FS_SLOW_COOLING, k, p
+            tval, t_ref, state[1], state[2], state[3], state[4], state[0], k, p, jet_phase=jet_phase
         )
 
-    slow_ref_raw = _forward_shock_raw_flux(ref_state, nuval, p)
-    if previous_flux_at_ref is None:
-        previous_flux_at_ref = slow_ref_raw
-
-    if tval <= t_am:
-        current = slow_raw(tval)
-        ref_raw = slow_ref_raw
-        return previous_flux_at_ref * _forward_shock_raw_flux(current, nuval, p) / ref_raw
-
-    slow_cross = slow_raw(t_am)
-    slow_at_cross = (
-        previous_flux_at_ref
-        * _forward_shock_raw_flux(slow_cross, nuval, p)
-        / slow_ref_raw
-    )
-    self_current = _forward_shock_state_evolve_from_tref(
-        tval, t_am, slow_cross[1], slow_cross[2], slow_cross[3], slow_cross[4], FS_SELF_ABSORBED_SLOW, k, p
-    )
-    self_cross = _forward_shock_state_evolve_from_tref(
-        t_am, t_am, slow_cross[1], slow_cross[2], slow_cross[3], slow_cross[4], FS_SELF_ABSORBED_SLOW, k, p
-    )
-    return (
-        slow_at_cross
-        * _forward_shock_raw_flux(self_current, nuval, p)
-        / _forward_shock_raw_flux(self_cross, nuval, p)
-    )
-
-
-def _forward_shock_branch_state(tval, f0, nua0, num0, nuc0, k, t0, p):
-    initial_regime = _forward_shock_initial_regime(nua0, num0, nuc0)
-
-    if initial_regime == FS_FAST_COOLING:
-        _, _, bm, bc = _forward_shock_relativistic_indices(k, p, FS_FAST_COOLING)
-        t_mc = t0 * (num0 / nuc0) ** (1 / (bc - bm))
-        if tval <= t_mc:
-            return _forward_shock_state_evolve_from_tref(tval, t0, f0, nua0, num0, nuc0, FS_FAST_COOLING, k, p)
-
-        fast_cross = _forward_shock_state_evolve_from_tref(t_mc, t0, f0, nua0, num0, nuc0, FS_FAST_COOLING, k, p)
-        _, _, nua_ref, num_ref, _ = fast_cross
-        _, ba, bm, _ = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
-        t_am = t_mc * (num_ref / nua_ref) ** (1 / (ba - bm))
-        if tval <= t_am:
+    while True:
+        event_time, event_kind, event_regime = _forward_shock_next_event(t_ref, state, k, p, jet_break, jet_phase)
+        if event_time is None or event_time >= tval:
             return _forward_shock_state_evolve_from_tref(
-                tval, t_mc, fast_cross[1], fast_cross[2], fast_cross[3], fast_cross[4], FS_SLOW_COOLING, k, p
+                tval, t_ref, state[1], state[2], state[3], state[4], state[0], k, p, jet_phase=jet_phase
             )
 
-        slow_cross = _forward_shock_state_evolve_from_tref(
-            t_am, t_mc, fast_cross[1], fast_cross[2], fast_cross[3], fast_cross[4], FS_SLOW_COOLING, k, p
+        state = _forward_shock_state_evolve_from_tref(
+            event_time, t_ref, state[1], state[2], state[3], state[4], state[0], k, p, jet_phase=jet_phase
         )
-        return _forward_shock_state_evolve_from_tref(
-            tval, t_am, slow_cross[1], slow_cross[2], slow_cross[3], slow_cross[4], FS_SELF_ABSORBED_SLOW, k, p
+        t_ref = event_time
+        if event_kind == "jet":
+            jet_phase = True
+        elif event_kind == "spectral":
+            state = (event_regime, state[1], state[2], state[3], state[4])
+
+
+def _forward_shock_flux_from_state(tval, nuval, t_ref, ref_state, k, p, jet_break, jet_phase, previous_flux_at_ref=None):
+    raw_ref = _forward_shock_raw_flux(ref_state, nuval, p)
+    if previous_flux_at_ref is None:
+        previous_flux_at_ref = raw_ref
+
+    event_time, event_kind, event_regime = _forward_shock_next_event(t_ref, ref_state, k, p, jet_break, jet_phase)
+    if event_time is None or event_time >= tval:
+        current = _forward_shock_state_evolve_from_tref(
+            tval, t_ref, ref_state[1], ref_state[2], ref_state[3], ref_state[4], ref_state[0], k, p, jet_phase=jet_phase
         )
+        return previous_flux_at_ref * _forward_shock_raw_flux(current, nuval, p) / raw_ref
 
-    if initial_regime == FS_SLOW_COOLING:
-        _, ba, bm, _ = _forward_shock_relativistic_indices(k, p, FS_SLOW_COOLING)
-        t_am = t0 * (num0 / nua0) ** (1 / (ba - bm))
-        if tval <= t_am:
-            return _forward_shock_state_evolve_from_tref(tval, t0, f0, nua0, num0, nuc0, FS_SLOW_COOLING, k, p)
+    event_state = _forward_shock_state_evolve_from_tref(
+        event_time, t_ref, ref_state[1], ref_state[2], ref_state[3], ref_state[4], ref_state[0], k, p, jet_phase=jet_phase
+    )
+    flux_at_event = previous_flux_at_ref * _forward_shock_raw_flux(event_state, nuval, p) / raw_ref
 
-        slow_cross = _forward_shock_state_evolve_from_tref(t_am, t0, f0, nua0, num0, nuc0, FS_SLOW_COOLING, k, p)
-        return _forward_shock_state_evolve_from_tref(
-            tval, t_am, slow_cross[1], slow_cross[2], slow_cross[3], slow_cross[4], FS_SELF_ABSORBED_SLOW, k, p
-        )
+    if event_kind == "jet":
+        next_state = event_state
+        next_jet_phase = True
+    else:
+        next_state = (event_regime, event_state[1], event_state[2], event_state[3], event_state[4])
+        next_jet_phase = jet_phase
 
-    if initial_regime == FS_SELF_ABSORBED_SLOW:
-        return _forward_shock_state_evolve_from_tref(tval, t0, f0, nua0, num0, nuc0, FS_SELF_ABSORBED_SLOW, k, p)
-
-    raise ValueError(f"Unsupported forward-shock spectral regime: {initial_regime}")
+    return _forward_shock_flux_from_state(
+        tval, nuval, event_time, next_state, k, p, jet_break, next_jet_phase, previous_flux_at_ref=flux_at_event
+    )
 
 
 def forward_shock_flux(ivar, f0, nu0_1, nu0_2, nu0_3, k, t0, jet_break=None, p=2.2):
-    if jet_break is not None:
-        return _legacy_forward_shock_flux(
-            ivar, f0, nu0_1, nu0_2, nu0_3, k, t0, jet_break=jet_break, p=p
-        )
-
     t, nu = ivar
-    initial_regime = _forward_shock_initial_regime(nu0_1, nu0_2, nu0_3)
-    initial_state = (initial_regime, f0, nu0_1, nu0_2, nu0_3)
+    initial_state, initial_jet_phase = _forward_shock_initial_state(f0, nu0_1, nu0_2, nu0_3, jet_break, k, t0, p)
     results = []
 
     for tval, nuval in zip(t, nu):
-        if initial_regime == FS_FAST_COOLING:
-            _, _, bm, bc = _forward_shock_relativistic_indices(k, p, FS_FAST_COOLING)
-            t_mc = t0 * (nu0_2 / nu0_3) ** (1 / (bc - bm))
-            if tval <= t_mc:
-                state = _forward_shock_state_evolve_from_tref(tval, t0, f0, nu0_1, nu0_2, nu0_3, FS_FAST_COOLING, k, p)
-                result = _forward_shock_raw_flux(state, nuval, p)
-            else:
-                fast_cross = _forward_shock_state_evolve_from_tref(t_mc, t0, f0, nu0_1, nu0_2, nu0_3, FS_FAST_COOLING, k, p)
-                fast_at_cross = _forward_shock_raw_flux(fast_cross, nuval, p)
-                result = _forward_shock_slow_flux_with_self_absorption_transition(
-                    tval, nuval, t_mc, fast_cross, k, p, previous_flux_at_ref=fast_at_cross
-                )
-            results.append(result)
-            continue
-
-        if initial_regime == FS_SLOW_COOLING:
-            result = _forward_shock_slow_flux_with_self_absorption_transition(
-                tval, nuval, t0, initial_state, k, p
-            )
-            results.append(result)
-            continue
-
-        if initial_regime == FS_SELF_ABSORBED_SLOW:
-            state = _forward_shock_state_evolve_from_tref(
-                tval, t0, f0, nu0_1, nu0_2, nu0_3, FS_SELF_ABSORBED_SLOW, k, p
-            )
-            result = _forward_shock_raw_flux(state, nuval, p)
-            results.append(result)
-            continue
-
-        raise ValueError(f"Unsupported forward-shock spectral regime: {initial_regime}")
+        result = _forward_shock_flux_from_state(
+            tval, nuval, t0, initial_state, k, p, jet_break, initial_jet_phase
+        )
         results.append(result)
 
     return np.array(results)
-
-
-def _legacy_forward_shock_flux(ivar, f0, nu0_1, nu0_2,nu0_3, k, t0,jet_break=None, p=2.2):
-    
-    d=0.1
-    s = 10
-    a1 = -k/(2*(4-k))
-    aj = -1
-    b1 = -3*k/(5*(4-k))
-    b1j = -1/5
-    b2 = -3/2
-    b2j = -2
-    b3 = -(4-3*k)/(2*(4-k))
-    b3j = 0
-    t, nu = ivar
-    y1 = []
-    y2 = []
-    y3 = []
-    t_break = np.amax(t)
-    ## Use an analytic solution here instead of this solution
-    t_break = t0*(nu0_2/nu0_1)**(1/(b1-b2))
-    nu_trans = nu0_1*(t_break/t0)**b1
-    nuc_trans = nu0_3*(t_break/t0)**b3
-    if jet_break is not None:
-        nua_atjetbreak = nu0_1*(jet_break/t0)**b1
-        num_atjetbreak = nu0_2*(jet_break/t0)**b2
-        nuc_atjetbreak = nu0_3*(jet_break/t0)**b3
-        if nua_atjetbreak<num_atjetbreak:
-            t_break = jet_break*(num_atjetbreak/nua_atjetbreak)**(1/(b1j-b2j))
-            nu_trans = nua_atjetbreak*(t_break/jet_break)**b1j
-            nuc_trans = num_atjetbreak*(t_break/jet_break)**b3j
-    for tval,nuval in zip(t,nu):
-        b1_1 = -3*k/(5*(4-k))
-        b2_1 = -3/2
-        b3_1 = -(4-3*k)/(2*(4-k))
-        nua_1 = nu0_1*(tval/t0)**b1_1
-        num_1 = nu0_2*(tval/t0)**b2_1
-        nuc_1 = nu0_3*(tval/t0)**b3_1
-        ##### Used to be an if here ### 
-        c1_1 = 2
-        c2_1 = 1/3
-        c3_1 = -(p-1)/2
-        c4_1 = -p/2
-        fnu_m1 = f0*(tval/t0)**a1
-        fpk_1 = fnu_m1*(nua_1/num_1)**(1/3)
-
-        #### ######################
-        a1_2 = -k/(2*(4-k))
-        b1_2 = -3/2
-        b2_2 = -(12*p+8-3*p*k+2*k)/(2*(4-k)*(p+4))
-        b3_2 = -(4-3*k)/(2*(4-k))
-        c1_2 = 2
-        c2_2 = 5/2
-        c3_2 = -(p-1)/2
-        c4_2 = -p/2
-        # At t_break num==nua, determines the normalization of these values.
-        num_2 = nu_trans*(tval/t0)**b1_2
-        nua_2 = nu_trans*(tval/t0)**b2_2
-        nuc_2 = nuc_trans*(tval/t0)**b3_2
-        num_break2 = nu_trans*(t_break/t0)**b1_2
-        nua_break2 = nu_trans*(t_break/t0)**b2_2
-        nuc_break2 = nuc_trans*(t_break/t0)**b3_2
-        
-        res1 = tsbpl(nuval,fpk_1,nua_1,num_1,nuc_1,c1_1,c2_1,c3_1,c4_1)
-
-        num_1_tbreak = nu0_1*(t_break/t0)**b1_1
-        nua_1_tbreak = nu0_2*(t_break/t0)**(b2_1)
-        nuc_1_tbreak = nu0_3*(t_break/t0)**(b3_1)
-        fnu_m1 = f0*(t_break/t0)**a1
-        F_bk1 = tsbpl(nuval, fnu_m1*(nua_1_tbreak/num_1_tbreak)**(1/3), nua_1_tbreak, num_1_tbreak, nuc_1_tbreak, c1_1,c2_1,c3_1,c4_1)
-        # F_bk1 = dsbpl(nuval,fpk_1,num_1,c1_1,c2_1,nua_1,c3_1,s)
-        if jet_break is not None:
-            ######## jet scalings ########
-            if t_break < jet_break:
-
-                
-                fnu_m_2 = f0*(tval/t0)**a1_2
-                fpk_2 = fnu_m_2*(num_2/nua_2)**(3)
-                fpk2_break = f0*(t_break/t0)**a1_2*(num_break2/nua_break2)**(3)
-                F_bk2 = tsbpl(nuval,fpk2_break, num_break2, nua_break2, nuc_break2, c1_2, c2_2, c3_2, c4_2)
-                res2 = F_bk1*tsbpl(nuval,fpk_2,num_2,nua_2,nuc_2,c1_2,c2_2,c3_2,c4_2)/F_bk2
-
-                
-                b1_j = -2
-                b2_j = -(2*(p+1))/(p+4)
-                b3_j = 0
-                num_2_atjetbreak = nu_trans*(jet_break/t0)**b1_2
-                nua_2_atjetbreak = nu_trans*(jet_break/t0)**b2_2
-                nuc_2_atjetbreak = nuc_trans*(jet_break/t0)**b3_2
-                
-                num_j = num_2_atjetbreak*(tval/jet_break)**b1_j
-                nua_j = nua_2_atjetbreak*(tval/jet_break)**b2_j
-                nuc_j = nuc_2_atjetbreak*(tval/jet_break)**b3_j
-                
-                fpk_j = (f0*(tval/t0)**aj)*(num_j/nua_j)**(3)
-                
-                
-                fpkj_break = (f0*(jet_break/t0)**aj)*(num_2_atjetbreak/nua_2_atjetbreak)**(3)
-                F_bkj = tsbpl(nuval,fpkj_break, num_2_atjetbreak, nua_2_atjetbreak, nuc_2_atjetbreak, c1_2, c2_2, c3_2, c4_2)
-
-                fpk_2_jetbreak = (f0*(jet_break/t0)**a1_2)*((num_2_atjetbreak/nua_2_atjetbreak)**(3))
-                F_bk2j = F_bk1*tsbpl(nuval,fpk_2_jetbreak,num_2_atjetbreak,nua_2_atjetbreak,nuc_2_atjetbreak,c1_2,c2_2,c3_2,c4_2)/F_bk2
-
-                
-                resj = F_bk2j*tsbpl(nuval,fpk_j,num_j,nua_j,nuc_j,c1_2,c2_2,c3_2,c4_2)/F_bkj
-                # if np.abs(tval-jet_break)<1:
-                    # print(fpk_j, fpkj_break)
-            else:
-               
-                b1_j = -1/5
-                b2_j = -2
-                b3_j = 0
-
-                a1_2 = -1
-                b1_2 = -2
-                b2_2 = -(2*(p+1))/(p+4)
-                b3_2 = 0
- 
-
-                
-                nua_j = nua_atjetbreak*(tval/jet_break)**b1_j
-                num_j = num_atjetbreak*(tval/jet_break)**b2_j
-                nuc_j = nuc_atjetbreak*(tval/jet_break)**b3_j
-                fpk_j = (f0*(tval/t0)**aj)*(nua_j/num_j)**(1/3)
-                Fpk_j_break = (f0*(jet_break/t0)**aj)*(nua_atjetbreak/num_atjetbreak)**(1/3)
-                Fpk1_j_break = (f0*(jet_break/t0)**a1)*(nua_atjetbreak/num_atjetbreak)**(1/3)
-
-
-                # fpkj_break = f0*(nua_atjetbreak/numbreak_j)**(1/3)**(jet_break/t0)**aj
-                F_bk1j = tsbpl(nuval,Fpk1_j_break,nua_atjetbreak,num_atjetbreak,nuc_atjetbreak,c1_1,c2_1,c3_1,c4_1)
-                F_bkj = tsbpl(nuval,Fpk_j_break, nua_atjetbreak, num_atjetbreak, nuc_atjetbreak, c1_1, c2_1, c3_1, c4_1)
-                resj = F_bk1j*tsbpl(nuval,fpk_j,nua_j,num_j,nuc_j,c1_1,c2_1,c3_1,c4_1)/F_bkj
-                # resj = tsbpl(nuval,fpk_j,nua_j,num_j,nuc_j,c1_1,c2_1,c3_1,c4_1)
-
-                # fpk_j_trans = f0*(nua_j/num_j)**(1/3)*(t_break/t0)**aj
-                # F_bkj_trans = tsbpl(nuval,fpk2_break, nua_atjetbreak, num_atjetbreak, nuc_atjetbreak, c1_1, c2_1, c3_1, c4_1)
-                # fpk2_break = Fpk1_j_break*(t_break/t0)**a1_2*(num_break2/nua_break2)**(3)
-                
-          
-                b1_2j = -2
-                b2_2j = -(2*(p+1))/(p+4)
-                b3_2j = 0
-
-                num_2 = nu_trans*(tval/t_break)**b1_2j
-                nua_2 = nu_trans*(tval/t_break)**b2_2j
-                nuc_2 = nuc_trans*(tval/t_break)**b3_2j
-
-                num_j_tbreak = nua_atjetbreak*(t_break/jet_break)**b1_j
-                nua_j_tbreak = num_atjetbreak*(t_break/jet_break)**b2_j
-                nuc_j_tbreak = nuc_atjetbreak*(t_break/jet_break)**b3_j
-                
-                fpk2_break = (f0*(t_break/t0)**aj) # num/nua factor is one by definition
-                F_bkj_tbreak = F_bk1j*tsbpl(nuval,fpk2_break, num_j_tbreak, nua_j_tbreak, nuc_j_tbreak, c1_1, c2_1, c3_1, c4_1)/F_bkj
-
-                Fbk2_tbreak = tsbpl(nuval,fpk2_break, nu_trans, nu_trans, nuc_trans, c1_2, c2_2, c3_2, c4_2)
-                fnu_m_2 = f0*(tval/t0)**a1_2
-                fpk_2 = fnu_m_2*(num_2/nua_2)**(3)
-                res2 = F_bkj_tbreak*tsbpl(nuval,fpk_2,num_2,nua_2,nuc_2,c1_2,c2_2,c3_2,c4_2)/Fbk2_tbreak
-            
-                # if np.abs(tval-t_break)<10:
-                # if num_j < nua_j:
-                #     print(tval,t_break,nua_j,num_j)
-                # print("A------>",nua_j,num_j)
-                # fpk2_break = f0*(t_break/t0)**a1_2*(num_break2/nua_break2)**(3)
-                # F_bk2 = tsbpl(nuval,fpk2_break, num_break2, nua_break2, nuc_break2, c1_2, c2_2, c3_2, c4_2)
-                # res2 = F_bk2*tsbpl(nuval,fpk_2,num_2,nua_2,nuc_2,c1_2,c2_2,c3_2,c4_2)/F_bkj
-                # print(F_bk1,F_bk2,F_bkj,F_bk2/F_bkj)
-                # res2 = tsbpl(nuval,fpk_2,num_2,nua_2,nuc_2,c1_2,c2_2,c3_2,c4_2)
-
-        else:
-            fnu_m_2 = f0*(tval/t0)**a1_2
-            fpk_2 = fnu_m_2*(num_2/nua_2)**(3)
-            fpk2_break = f0*(t_break/t0)**a1_2*(num_break2/nua_break2)**(3)
-            F_bk2 = tsbpl(nuval,fpk2_break, num_break2, nua_break2, nuc_break2, c1_2, c2_2, c3_2, c4_2)
-            res2 = F_bk1*tsbpl(nuval,fpk_2,num_2,nua_2,nuc_2,c1_2,c2_2,c3_2,c4_2)/F_bk2
-            resj = None
-        y1.append(res1)
-        y2.append(res2)
-        y3.append(resj)
-        # y2.append(res2)
-    # result = np.where( t<=t_break,np.array(y1),np.array(y2))
-    if jet_break is None:
-        result = np.where( t<=t_break,np.array(y1),np.array(y2))
-    else:
-        if t_break < jet_break:
-            result = np.where( t<=t_break,np.array(y1),np.array(y2))
-            result = np.where(t>jet_break,np.array(y3),result)
-        else:
-            result = np.where(t<=jet_break,np.array(y1),np.array(y3))
-            result = np.where(t>t_break,np.array(y2),result)
-    return result
-
 
 
 def _reverse_shock_thick_shell_indices(k, p, regime):
@@ -678,7 +457,7 @@ def reverse_shock(ivar, f0, nu0_1, nu0_2, nu0_3, k, t0_rev,p=2.2,givenuvals=Fals
     else:
         return np.array(res)
 
-def forward_shock_break_frequencies(ivar, nua_0, num_0, nuc_0, k, t0, p=2.2):
+def forward_shock_break_frequencies(ivar, nua_0, num_0, nuc_0, k, t0, p=2.2, jet_break=None):
     """Return FS (nu_a, nu_m, nu_c) at the requested observer times."""
     t, _ = ivar
     t = np.asarray(t)
@@ -687,7 +466,7 @@ def forward_shock_break_frequencies(ivar, nua_0, num_0, nuc_0, k, t0, p=2.2):
     nuc = []
     for tval in t:
         _, _, nua_t, num_t, nuc_t = _forward_shock_branch_state(
-            tval, 1.0, nua_0, num_0, nuc_0, k, t0, p
+            tval, 1.0, nua_0, num_0, nuc_0, k, t0, p, jet_break=jet_break
         )
         nua.append(nua_t)
         num.append(num_t)
@@ -704,12 +483,13 @@ def forward_shock_absorption_tau(
     k,
     t0,
     p=2.2,
+    jet_break=None,
 ):
     """FS optical depth for RS photons from McMahon, Kumar & Piran 2006 Eq. 14."""
     _, nu = ivar
     nu = np.asarray(nu)
     nua, num, nuc = forward_shock_break_frequencies(
-        ivar, nua_0, num_0, nuc_0, k, t0, p=p
+        ivar, nua_0, num_0, nuc_0, k, t0, p=p, jet_break=jet_break
     )
     lower_fs_break = np.minimum(nuc, num)
     below_lower_fs_break = nu < lower_fs_break
@@ -737,7 +517,7 @@ def forward_reverse_model(
     if not apply_fs_absorption:
         return fwd + rev
 
-    tau_abs_fs = forward_shock_absorption_tau(ivar, nua_0, num_0, nuc_0, k, t0, p=p)
+    tau_abs_fs = forward_shock_absorption_tau(ivar, nua_0, num_0, nuc_0, k, t0, p=p, jet_break=t_j)
     return fwd + rev * np.exp(-tau_abs_fs)
 
 

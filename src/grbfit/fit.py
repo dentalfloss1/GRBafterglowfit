@@ -200,6 +200,7 @@ def evaluate_model_components(cfg, theta, ivar):
                 k,
                 t0,
                 p=p,
+                jet_break=t_j,
             )
             reverse_observed = reverse_intrinsic * np.exp(-tau_abs_fs)
         total = forward + reverse_observed
