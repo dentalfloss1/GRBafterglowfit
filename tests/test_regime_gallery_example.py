@@ -30,6 +30,7 @@ def test_regime_gallery_example_generates_expected_figures(tmp_path):
     expected = [
         "forward_shock_spectra.png",
         "forward_shock_light_curves.png",
+        "forward_shock_jet_break_scenarios.png",
         "forward_shock_absorption_factor.png",
         "reverse_shock_spectra.png",
         "reverse_shock_light_curves.png",

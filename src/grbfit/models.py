@@ -148,6 +148,15 @@ def _future_crossing_time(t_ref, nu_left, nu_right, b_left, b_right):
     return t_cross
 
 
+def _past_crossing_time(t_ref, nu_left, nu_right, b_left, b_right):
+    if b_left == b_right or nu_left <= 0 or nu_right <= 0:
+        return None
+    t_cross = t_ref * (nu_right / nu_left) ** (1 / (b_left - b_right))
+    if not np.isfinite(t_cross) or t_cross >= t_ref * (1 - 1e-12):
+        return None
+    return t_cross
+
+
 def _forward_shock_next_spectral_transition(t_ref, state, k, p, jet_phase):
     regime, _, nua, num, nuc = state
     _, ba, bm, bc = _forward_shock_temporal_indices(k, p, regime, jet_phase=jet_phase)
@@ -159,6 +168,21 @@ def _forward_shock_next_spectral_transition(t_ref, state, k, p, jet_phase):
     if regime == FS_SLOW_COOLING:
         t_cross = _future_crossing_time(t_ref, nua, num, ba, bm)
         return t_cross, FS_SELF_ABSORBED_SLOW
+
+    return None, None
+
+
+def _forward_shock_previous_spectral_transition(t_ref, state, k, p, jet_phase):
+    regime, _, nua, num, nuc = state
+    _, ba, bm, bc = _forward_shock_temporal_indices(k, p, regime, jet_phase=jet_phase)
+
+    if regime == FS_SELF_ABSORBED_SLOW:
+        t_cross = _past_crossing_time(t_ref, nua, num, ba, bm)
+        return t_cross, FS_SLOW_COOLING
+
+    if regime == FS_SLOW_COOLING:
+        t_cross = _past_crossing_time(t_ref, num, nuc, bm, bc)
+        return t_cross, FS_FAST_COOLING
 
     return None, None
 
@@ -181,20 +205,80 @@ def _forward_shock_next_event(t_ref, state, k, p, jet_break, jet_phase):
     return event_time, event_kind, event_regime
 
 
+def _forward_shock_previous_event(t_ref, state, k, p, jet_break, jet_phase):
+    event_time = None
+    event_kind = None
+    event_regime = None
+
+    if jet_break is not None and jet_phase and jet_break < t_ref * (1 - 1e-12):
+        event_time = jet_break
+        event_kind = "jet"
+
+    transition_time, transition_regime = _forward_shock_previous_spectral_transition(
+        t_ref, state, k, p, jet_phase
+    )
+    if transition_time is not None and (event_time is None or transition_time > event_time):
+        event_time = transition_time
+        event_kind = "spectral"
+        event_regime = transition_regime
+
+    return event_time, event_kind, event_regime
+
+
 def _forward_shock_initial_state(f0, nua0, num0, nuc0, jet_break, k, t0, p):
     initial_regime = _forward_shock_initial_regime(nua0, num0, nuc0)
     initial_jet_phase = jet_break is not None and jet_break <= t0
     return (initial_regime, f0, nua0, num0, nuc0), initial_jet_phase
 
 
-def _forward_shock_branch_state(tval, f0, nua0, num0, nuc0, k, t0, p, jet_break=None):
+def _forward_shock_reference_state(t_start, f0, nua0, num0, nuc0, k, t0, p, jet_break=None):
     state, jet_phase = _forward_shock_initial_state(f0, nua0, num0, nuc0, jet_break, k, t0, p)
     t_ref = t0
 
-    if tval <= t_ref:
-        return _forward_shock_state_evolve_from_tref(
-            tval, t_ref, state[1], state[2], state[3], state[4], state[0], k, p, jet_phase=jet_phase
+    if t_start >= t_ref:
+        return t_ref, state, jet_phase
+
+    while True:
+        event_time, event_kind, event_regime = _forward_shock_previous_event(
+            t_ref, state, k, p, jet_break, jet_phase
         )
+        if event_time is None or event_time <= t_start * (1 + 1e-12):
+            state = _forward_shock_state_evolve_from_tref(
+                t_start,
+                t_ref,
+                state[1],
+                state[2],
+                state[3],
+                state[4],
+                state[0],
+                k,
+                p,
+                jet_phase=jet_phase,
+            )
+            return t_start, state, jet_phase
+
+        state = _forward_shock_state_evolve_from_tref(
+            event_time,
+            t_ref,
+            state[1],
+            state[2],
+            state[3],
+            state[4],
+            state[0],
+            k,
+            p,
+            jet_phase=jet_phase,
+        )
+        t_ref = event_time
+        if event_kind == "jet":
+            jet_phase = False
+        elif event_kind == "spectral":
+            state = (event_regime, state[1], state[2], state[3], state[4])
+
+
+def _forward_shock_state_from_reference(tval, t_ref, state, jet_phase, k, p, jet_break=None):
+    if tval <= t_ref * (1 + 1e-12):
+        return state
 
     while True:
         event_time, event_kind, event_regime = _forward_shock_next_event(t_ref, state, k, p, jet_break, jet_phase)
@@ -211,6 +295,15 @@ def _forward_shock_branch_state(tval, f0, nua0, num0, nuc0, k, t0, p, jet_break=
             jet_phase = True
         elif event_kind == "spectral":
             state = (event_regime, state[1], state[2], state[3], state[4])
+
+
+def _forward_shock_branch_state(tval, f0, nua0, num0, nuc0, k, t0, p, jet_break=None):
+    t_ref, state, jet_phase = _forward_shock_reference_state(
+        min(tval, t0), f0, nua0, num0, nuc0, k, t0, p, jet_break=jet_break
+    )
+    return _forward_shock_state_from_reference(
+        tval, t_ref, state, jet_phase, k, p, jet_break=jet_break
+    )
 
 
 def _forward_shock_flux_from_state(tval, nuval, t_ref, ref_state, k, p, jet_break, jet_phase, previous_flux_at_ref=None):
@@ -244,12 +337,14 @@ def _forward_shock_flux_from_state(tval, nuval, t_ref, ref_state, k, p, jet_brea
 
 def forward_shock_flux(ivar, f0, nu0_1, nu0_2, nu0_3, k, t0, jet_break=None, p=2.2):
     t, nu = ivar
-    initial_state, initial_jet_phase = _forward_shock_initial_state(f0, nu0_1, nu0_2, nu0_3, jet_break, k, t0, p)
+    t_ref, initial_state, initial_jet_phase = _forward_shock_reference_state(
+        min(np.min(t), t0), f0, nu0_1, nu0_2, nu0_3, k, t0, p, jet_break=jet_break
+    )
     results = []
 
     for tval, nuval in zip(t, nu):
         result = _forward_shock_flux_from_state(
-            tval, nuval, t0, initial_state, k, p, jet_break, initial_jet_phase
+            tval, nuval, t_ref, initial_state, k, p, jet_break, initial_jet_phase
         )
         results.append(result)
 
@@ -461,12 +556,21 @@ def forward_shock_break_frequencies(ivar, nua_0, num_0, nuc_0, k, t0, p=2.2, jet
     """Return FS (nu_a, nu_m, nu_c) at the requested observer times."""
     t, _ = ivar
     t = np.asarray(t)
+    t_ref, initial_state, initial_jet_phase = _forward_shock_reference_state(
+        min(np.min(t), t0), 1.0, nua_0, num_0, nuc_0, k, t0, p, jet_break=jet_break
+    )
     nua = []
     num = []
     nuc = []
     for tval in t:
-        _, _, nua_t, num_t, nuc_t = _forward_shock_branch_state(
-            tval, 1.0, nua_0, num_0, nuc_0, k, t0, p, jet_break=jet_break
+        _, _, nua_t, num_t, nuc_t = _forward_shock_state_from_reference(
+            tval,
+            t_ref,
+            initial_state,
+            initial_jet_phase,
+            k,
+            p,
+            jet_break=jet_break,
         )
         nua.append(nua_t)
         num.append(num_t)

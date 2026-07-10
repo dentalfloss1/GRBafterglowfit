@@ -397,16 +397,101 @@ class ForwardShockSlopeTests(unittest.TestCase):
                 _log_slope(times, num), break_exps[2], delta=1e-12
             )
 
+    def test_forward_break_frequencies_with_late_t0_recover_earlier_slow_branch(self):
+        k = 0
+        late_t0 = 100.0
+        times = np.array([1.0, 2.0])
+        nua, num, nuc = forward_shock_break_frequencies(
+            (times, np.ones_like(times)),
+            1e4,
+            1e3,
+            1e8,
+            k,
+            late_t0,
+            p=P,
+        )
+
+        self.assertTrue(np.all(nua < num))
+        self.assertTrue(np.all(num < nuc))
+        _, break_exps, _ = _forward_early_indices(k)
+        self.assertAlmostEqual(_log_slope(times, nua), break_exps[0], delta=1e-12)
+        self.assertAlmostEqual(_log_slope(times, num), break_exps[1], delta=1e-12)
+        self.assertAlmostEqual(_log_slope(times, nuc), break_exps[2], delta=1e-12)
+
     def test_forward_shock_jet_break_is_continuous(self):
-        jet_break = 10.0
         freqs = np.array([1e3, 1e5, 1e10])
+        for jet_break in (0.1, T0, 10.0):
+            for k in (0, 2):
+                for freq in freqs:
+                    times = jet_break * np.array([0.999, 1.0, 1.001])
+                    flux = _forward_flux_with_jet(times, np.full_like(times, freq), k, jet_break)
+                    self.assertTrue(np.all(np.isfinite(flux)))
+                    self.assertTrue(np.all(flux > 0))
+                    self.assertLess(np.max(flux) / np.min(flux), 1.02)
+
+    def test_forward_shock_pre_t0_jet_break_uses_pre_jet_scalings_before_tj(self):
+        jet_break = 0.1
+        nua0 = 1e2
+        num0 = 1e8
+        nuc0 = 1e15
+        freq = 1e5
+        pre_jet_times = jet_break * np.array([0.2, 0.5])
+        post_jet_times = np.array([0.2, 0.5])
+
         for k in (0, 2):
-            for freq in freqs:
-                times = jet_break * np.array([0.999, 1.0, 1.001])
-                flux = _forward_flux_with_jet(times, np.full_like(times, freq), k, jet_break)
-                self.assertTrue(np.all(np.isfinite(flux)))
-                self.assertTrue(np.all(flux > 0))
-                self.assertLess(np.max(flux) / np.min(flux), 1.02)
+            pre_jet_flux = _forward_flux_with_jet(
+                pre_jet_times,
+                np.full_like(pre_jet_times, freq),
+                k,
+                jet_break,
+                nua0=nua0,
+                num0=num0,
+                nuc0=nuc0,
+            )
+            expected_pre = _temporal_slope(*_forward_early_indices(k), segment=1)
+            self.assertAlmostEqual(_log_slope(pre_jet_times, pre_jet_flux), expected_pre, delta=0.05)
+
+            post_jet_flux = _forward_flux_with_jet(
+                post_jet_times,
+                np.full_like(post_jet_times, freq),
+                k,
+                jet_break,
+                nua0=nua0,
+                num0=num0,
+                nuc0=nuc0,
+            )
+            expected_post = _temporal_slope(*_forward_jet_slow_indices(), segment=1)
+            self.assertAlmostEqual(_log_slope(post_jet_times, post_jet_flux), expected_post, delta=0.05)
+
+            nua, num, nuc = forward_shock_break_frequencies(
+                (pre_jet_times, np.ones_like(pre_jet_times)),
+                nua0,
+                num0,
+                nuc0,
+                k,
+                T0,
+                p=P,
+                jet_break=jet_break,
+            )
+            _, early_break_exps, _ = _forward_early_indices(k)
+            self.assertAlmostEqual(_log_slope(pre_jet_times, nua), early_break_exps[0], delta=1e-12)
+            self.assertAlmostEqual(_log_slope(pre_jet_times, num), early_break_exps[1], delta=1e-12)
+            self.assertAlmostEqual(_log_slope(pre_jet_times, nuc), early_break_exps[2], delta=1e-12)
+
+            nua, num, nuc = forward_shock_break_frequencies(
+                (post_jet_times, np.ones_like(post_jet_times)),
+                nua0,
+                num0,
+                nuc0,
+                k,
+                T0,
+                p=P,
+                jet_break=jet_break,
+            )
+            _, jet_break_exps, _ = _forward_jet_slow_indices()
+            self.assertAlmostEqual(_log_slope(post_jet_times, nua), jet_break_exps[0], delta=1e-12)
+            self.assertAlmostEqual(_log_slope(post_jet_times, num), jet_break_exps[1], delta=1e-12)
+            self.assertAlmostEqual(_log_slope(post_jet_times, nuc), jet_break_exps[2], delta=1e-12)
 
     def test_forward_shock_jet_break_changes_pre_absorption_crossing_slopes(self):
         k = 0
