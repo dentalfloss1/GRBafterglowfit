@@ -136,12 +136,13 @@ def load_data(cfg):
 
     # 📄 optional files
     if "other_file" in cfg["data"]:
+        other_file = cfg["data"]["other_file"]
         try:
-            otherdata = pd.read_csv(cfg["data"]["other_file"])
+            otherdata = pd.read_csv(other_file)
             otherdata["instrument"] = "other"
             dfs.append(otherdata)
         except FileNotFoundError:
-            print(f"⚠️ Warning: {cfg['data']['otherfile']} not found, skipping")
+            print(f"⚠️ Warning: {other_file} not found, skipping")
 
     # 🔥 NEW: Swift support
     if "batxrt_file" in cfg["data"] and cfg["data"]["batxrt_file"] is not None:

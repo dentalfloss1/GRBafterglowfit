@@ -201,6 +201,14 @@ def detectable_duration_days(times, flux_microjy, threshold_microjy):
     return float(np.sum(durations[mid_flux > threshold_microjy]))
 
 
+def _format_detectable_duration(duration_days, is_lower_bound, decimals=0):
+    if decimals == 0:
+        duration = str(int(round(duration_days)))
+    else:
+        duration = f"{duration_days:.{decimals}f}"
+    return f">{duration}" if is_lower_bound else duration
+
+
 def _compact_warning_text(warnings, max_items=3):
     if len(warnings) <= max_items:
         return "Fixed, not fitted:\n" + "\n".join(warnings)
@@ -284,6 +292,8 @@ def make_detectability_plot(
 
     det1days = detectable_duration_days(times, total_microjy, threshold1)
     det2days = detectable_duration_days(times, total_microjy, threshold2)
+    det1_lower_bound = bool(total_microjy[-1] > threshold1)
+    det2_lower_bound = bool(total_microjy[-1] > threshold2)
 
     positive_values = np.concatenate([
         total_microjy[total_microjy > 0],
@@ -327,10 +337,12 @@ def make_detectability_plot(
 
     threshold1_name = threshold1_label.replace(r"3$\sigma$ ", "")
     threshold2_name = threshold2_label.replace(r"3$\sigma$ ", "")
+    det1_title = _format_detectable_duration(det1days, det1_lower_bound)
+    det2_title = _format_detectable_duration(det2days, det2_lower_bound)
     ax.set_title(
         f"{freq:g} GHz Model\n"
-        f"{int(round(det1days, 0))} days detectable with {threshold1_name}\n"
-        f"{int(round(det2days, 0))} days detectable with {threshold2_name}"
+        f"{det1_title} days detectable with {threshold1_name}\n"
+        f"{det2_title} days detectable with {threshold2_name}"
     )
 
     warnings = fixed_parameter_warnings(
@@ -361,14 +373,18 @@ def make_detectability_plot(
     fig.savefig(output, dpi=200)
     plt.close(fig)
 
-    print(f"Detectable duration above {threshold1_label}: {det1days:.1f} days")
-    print(f"Detectable duration above {threshold2_label}: {det2days:.1f} days")
+    det1_console = _format_detectable_duration(det1days, det1_lower_bound, decimals=1)
+    det2_console = _format_detectable_duration(det2days, det2_lower_bound, decimals=1)
+    print(f"Detectable duration above {threshold1_label}: {det1_console} days")
+    print(f"Detectable duration above {threshold2_label}: {det2_console} days")
     print(f"Detectability plot saved to {output}")
 
     return {
         "output": output,
         "det1days": det1days,
         "det2days": det2days,
+        "det1_lower_bound": det1_lower_bound,
+        "det2_lower_bound": det2_lower_bound,
         "fixed_parameter_warnings": warnings,
     }
 
