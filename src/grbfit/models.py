@@ -3,6 +3,8 @@ import numpy as np
 RS_SLOW_COOLING = "nu_a < nu_m < nu_c"
 RS_FAST_COOLING = "nu_a < nu_c < nu_m"
 RS_SELF_ABSORBED_SLOW = "nu_m < nu_a < nu_c"
+RS_THICK_SHELL = "thick"
+RS_THIN_SHELL = "thin"
 
 FS_SLOW_COOLING = "nu_a < nu_m < nu_c"
 FS_FAST_COOLING = "nu_a < nu_c < nu_m"
@@ -369,6 +371,56 @@ def _reverse_shock_thick_shell_indices(k, p, regime):
     return fmax, nua, num, nuc
 
 
+def reverse_shock_g_bounds(k):
+    """Return the theoretical thin-shell bounds on the Lorentz-factor index g."""
+    return (3 - k) / 2, (7 - 2 * k) / 2
+
+
+def reverse_shock_default_g(k):
+    """Return the midpoint of the theoretical thin-shell g interval."""
+    lower, upper = reverse_shock_g_bounds(k)
+    return (lower + upper) / 2
+
+
+def _reverse_shock_thin_shell_indices(g, p, regime):
+    """Temporal indices for the thin-shell reverse shock in Table 5."""
+    denominator = 7 * (2 * g + 1)
+    fmax = -(11 * g + 12) / denominator
+    num = -3 * (5 * g + 8) / denominator
+    nuc = num
+
+    if regime in (RS_SLOW_COOLING, RS_FAST_COOLING):
+        nua = -3 * (11 * g + 12) / (35 * (2 * g + 1))
+    elif regime == RS_SELF_ABSORBED_SLOW:
+        nua = -(
+            3 * p * (5 * g + 8) + 8 * (4 * g + 5)
+        ) / (denominator * (p + 4))
+    else:
+        raise ValueError(f"Unsupported reverse-shock spectral regime: {regime}")
+
+    return fmax, nua, num, nuc
+
+
+def _reverse_shock_temporal_indices(k, p, regime, reverse_shell, g):
+    if reverse_shell == RS_THICK_SHELL:
+        return _reverse_shock_thick_shell_indices(k, p, regime)
+    if reverse_shell != RS_THIN_SHELL:
+        raise ValueError(
+            "Unsupported reverse-shock shell type "
+            f"{reverse_shell!r}; expected '{RS_THICK_SHELL}' or '{RS_THIN_SHELL}'."
+        )
+
+    if g is None:
+        g = reverse_shock_default_g(k)
+    lower, upper = reverse_shock_g_bounds(k)
+    if not lower <= g <= upper:
+        raise ValueError(
+            f"Thin-shell g={g:g} is outside the theoretical range "
+            f"[{lower:g}, {upper:g}] for k={k:g}."
+        )
+    return _reverse_shock_thin_shell_indices(g, p, regime)
+
+
 def _reverse_shock_initial_regime(nua0, num0, nuc0):
     if nua0 < num0 < nuc0:
         return RS_SLOW_COOLING
@@ -378,7 +430,7 @@ def _reverse_shock_initial_regime(nua0, num0, nuc0):
         return RS_SELF_ABSORBED_SLOW
     raise ValueError(
         "Unsupported reverse-shock break ordering at t0_rev. "
-        "Supported thick-shell orderings are "
+        "Supported reverse-shock orderings are "
         f"{RS_SLOW_COOLING}, {RS_FAST_COOLING}, and {RS_SELF_ABSORBED_SLOW}; "
         f"got nu_a={nua0:g}, nu_m={num0:g}, nu_c={nuc0:g}."
     )
@@ -407,11 +459,22 @@ def _reverse_shock_spectrum(regime, nu, fnu_max, nua, num, nuc, p):
     raise ValueError(f"Unsupported reverse-shock spectral regime: {regime}")
 
 
-def _reverse_shock_branch_state(tval, f0, nua0, num0, nuc0, k, t0_rev, p):
+def _reverse_shock_branch_state(
+    tval,
+    f0,
+    nua0,
+    num0,
+    nuc0,
+    k,
+    t0_rev,
+    p,
+    reverse_shell=RS_THICK_SHELL,
+    g=None,
+):
     initial_regime = _reverse_shock_initial_regime(nua0, num0, nuc0)
 
-    fmax_i, ba_i, bm_i, bc_i = _reverse_shock_thick_shell_indices(
-        k, p, initial_regime
+    fmax_i, ba_i, bm_i, bc_i = _reverse_shock_temporal_indices(
+        k, p, initial_regime, reverse_shell, g
     )
 
     if initial_regime == RS_SLOW_COOLING:
@@ -427,8 +490,8 @@ def _reverse_shock_branch_state(tval, f0, nua0, num0, nuc0, k, t0_rev, p):
                 None,
             )
 
-        fmax_t, ba_t, bm_t, bc_t = _reverse_shock_thick_shell_indices(
-            k, p, RS_SELF_ABSORBED_SLOW
+        fmax_t, ba_t, bm_t, bc_t = _reverse_shock_temporal_indices(
+            k, p, RS_SELF_ABSORBED_SLOW, reverse_shell, g
         )
         scale_cross = t_am / t0_rev
         fmax_cross = f0 * scale_cross ** fmax_i
@@ -485,8 +548,8 @@ def _reverse_shock_branch_state(tval, f0, nua0, num0, nuc0, k, t0_rev, p):
             None,
         )
 
-    fmax_s, ba_s, bm_s, bc_s = _reverse_shock_thick_shell_indices(
-        k, p, RS_SLOW_COOLING
+    fmax_s, ba_s, bm_s, bc_s = _reverse_shock_temporal_indices(
+        k, p, RS_SLOW_COOLING, reverse_shell, g
     )
     scale_cross = t_am / t0_rev
     fmax_cross = f0 * scale_cross ** fmax_i
@@ -503,8 +566,18 @@ def _reverse_shock_branch_state(tval, f0, nua0, num0, nuc0, k, t0_rev, p):
     )
 
 
-def reverse_shock_break_frequencies(ivar, nua0_rev, num0_rev, nuc0_rev, k, t0_rev, p=2.2):
-    """Return thick-shell RS (nu_a, nu_m, nu_c) at the requested times."""
+def reverse_shock_break_frequencies(
+    ivar,
+    nua0_rev,
+    num0_rev,
+    nuc0_rev,
+    k,
+    t0_rev,
+    p=2.2,
+    reverse_shell=RS_THICK_SHELL,
+    g=None,
+):
+    """Return reverse-shock (nu_a, nu_m, nu_c) at the requested times."""
     t, _ = ivar
     t = np.asarray(t)
     nua = []
@@ -512,7 +585,16 @@ def reverse_shock_break_frequencies(ivar, nua0_rev, num0_rev, nuc0_rev, k, t0_re
     nuc = []
     for tval in t:
         _, _, nua_t, num_t, nuc_t, _ = _reverse_shock_branch_state(
-            tval, 1.0, nua0_rev, num0_rev, nuc0_rev, k, t0_rev, p
+            tval,
+            1.0,
+            nua0_rev,
+            num0_rev,
+            nuc0_rev,
+            k,
+            t0_rev,
+            p,
+            reverse_shell=reverse_shell,
+            g=g,
         )
         nua.append(nua_t)
         num.append(num_t)
@@ -520,21 +602,50 @@ def reverse_shock_break_frequencies(ivar, nua0_rev, num0_rev, nuc0_rev, k, t0_re
     return np.array(nua), np.array(num), np.array(nuc)
 
 
-# Relativistic thick-shell reverse shock.
-def reverse_shock(ivar, f0, nu0_1, nu0_2, nu0_3, k, t0_rev,p=2.2,givenuvals=False):
+def reverse_shock(
+    ivar,
+    f0,
+    nu0_1,
+    nu0_2,
+    nu0_3,
+    k,
+    t0_rev,
+    p=2.2,
+    givenuvals=False,
+    reverse_shell=RS_THICK_SHELL,
+    g=None,
+):
     t, nu = ivar
     res = []
     nuvals = []
     for tval,nuval in zip(t,nu):
         regime, fnu_max, nua, num, nuc, transition = _reverse_shock_branch_state(
-            tval, f0, nu0_1, nu0_2, nu0_3, k, t0_rev, p
+            tval,
+            f0,
+            nu0_1,
+            nu0_2,
+            nu0_3,
+            k,
+            t0_rev,
+            p,
+            reverse_shell=reverse_shell,
+            g=g,
         )
         result = _reverse_shock_spectrum(regime, nuval, fnu_max, nua, num, nuc, p)
 
         if transition is not None:
             previous_regime, t_cross = transition
             _, fmax_old, nua_old, num_old, nuc_old, _ = _reverse_shock_branch_state(
-                t_cross, f0, nu0_1, nu0_2, nu0_3, k, t0_rev, p
+                t_cross,
+                f0,
+                nu0_1,
+                nu0_2,
+                nu0_3,
+                k,
+                t0_rev,
+                p,
+                reverse_shell=reverse_shell,
+                g=g,
             )
             old_at_cross = _reverse_shock_spectrum(
                 previous_regime, nuval, fmax_old, nua_old, num_old, nuc_old, p
@@ -614,10 +725,22 @@ def forward_reverse_model(
     f0, f0_rev,
     nua0_rev, num0_rev, nuc0_rev,
     nua_0, num_0, nuc_0,
-    k, t0, t0_rev, p, t_j=None, apply_fs_absorption=False
+    k, t0, t0_rev, p, t_j=None, apply_fs_absorption=False,
+    reverse_shell=RS_THICK_SHELL, g=None
 ):
     fwd = forward_shock_flux(ivar, f0, nua_0, num_0, nuc_0, k, t0, jet_break=t_j, p=p)
-    rev = reverse_shock(ivar, f0_rev, nua0_rev, num0_rev, nuc0_rev, k, t0_rev, p)
+    rev = reverse_shock(
+        ivar,
+        f0_rev,
+        nua0_rev,
+        num0_rev,
+        nuc0_rev,
+        k,
+        t0_rev,
+        p,
+        reverse_shell=reverse_shell,
+        g=g,
+    )
     if not apply_fs_absorption:
         return fwd + rev
 

@@ -180,7 +180,16 @@ def _forward_late_breaks(time, k, nua0=1e2, num0=1e8, nuc0=1e15):
     ]
 
 
-def _reverse_flux(times, freqs, nua0, num0, nuc0, k=2):
+def _reverse_flux(
+    times,
+    freqs,
+    nua0,
+    num0,
+    nuc0,
+    k=2,
+    reverse_shell="thick",
+    g=None,
+):
     return reverse_shock(
         (np.asarray(times, dtype=float), np.asarray(freqs, dtype=float)),
         F0,
@@ -190,6 +199,8 @@ def _reverse_flux(times, freqs, nua0, num0, nuc0, k=2):
         k,
         T0,
         p=P,
+        reverse_shell=reverse_shell,
+        g=g,
     )
 
 
@@ -203,6 +214,29 @@ def _reverse_indices(k, regime):
         b_a = -(
             P * (73 - 14 * k) + 2 * (67 - 14 * k)
         ) / (12 * (4 - k) * (P + 4))
+
+    if regime == "slow":
+        norm_exp = fmax + (b_a - b_m) / 3
+        return norm_exp, [b_a, b_m, b_c], [2, 1 / 3, -(P - 1) / 2, -P / 2]
+    if regime == "fast":
+        norm_exp = fmax + (b_a - b_c) / 3
+        return norm_exp, [b_a, b_c, b_m], [2, 1 / 3, -1 / 2, -P / 2]
+    if regime == "self_absorbed":
+        norm_exp = fmax + 3 * (b_m - b_a)
+        return norm_exp, [b_m, b_a, b_c], [2, 5 / 2, -(P - 1) / 2, -P / 2]
+    raise ValueError(f"Unsupported regime: {regime}")
+
+
+def _thin_reverse_indices(g, regime):
+    fmax = -(11 * g + 12) / (7 * (2 * g + 1))
+    b_m = -3 * (5 * g + 8) / (7 * (2 * g + 1))
+    b_c = b_m
+    if regime in ("slow", "fast"):
+        b_a = -3 * (11 * g + 12) / (35 * (2 * g + 1))
+    else:
+        b_a = -(
+            3 * P * (5 * g + 8) + 8 * (4 * g + 5)
+        ) / (7 * (2 * g + 1) * (P + 4))
 
     if regime == "slow":
         norm_exp = fmax + (b_a - b_m) / 3
@@ -572,6 +606,32 @@ class ForwardShockSlopeTests(unittest.TestCase):
 
 
 class ReverseShockSlopeTests(unittest.TestCase):
+    def test_thin_shell_temporal_slopes_match_table_5(self):
+        cases = [
+            ((1e2, 1e8, 1e15), "slow", [1.0, 1e5, 1e11, 1e17]),
+            ((1e2, 1e15, 1e8), "fast", [1.0, 1e5, 1e11, 1e17]),
+            ((1e8, 1e2, 1e15), "self_absorbed", [1.0, 1e5, 1e11, 1e17]),
+        ]
+        times = [T0, 2 * T0]
+        for k, g in ((0, 2.5), (2, 1.0)):
+            for breaks, regime, freqs in cases:
+                norm_exp, break_exps, slopes = _thin_reverse_indices(g, regime)
+                for segment, freq in enumerate(freqs):
+                    flux = _reverse_flux(
+                        times,
+                        [freq, freq],
+                        *breaks,
+                        k=k,
+                        reverse_shell="thin",
+                        g=g,
+                    )
+                    expected = _temporal_slope(
+                        norm_exp, break_exps, slopes, segment
+                    )
+                    self.assertAlmostEqual(
+                        _log_slope(times, flux), expected, delta=0.05
+                    )
+
     def test_supported_regime_spectral_slopes_match_expected_segments(self):
         cases = [
             ((1e2, 1e8, 1e15), "slow", [1.0, 1e5, 1e11, 1e17]),

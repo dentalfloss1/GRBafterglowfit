@@ -15,7 +15,9 @@ import os  # 📂 file system checks
 import sys  # 🚪 clean exit
 import pandas as pd
 import csv
+import warnings
 from grbfit.artifacts import write_model_fit_json
+from grbfit.models import reverse_shock_default_g, reverse_shock_g_bounds
 
 def create_template_config(path="config.yaml"):
     print("📝 No config.yaml found — creating template...")
@@ -45,6 +47,11 @@ data:
 
 model:
   type: forward_only   # options: forward_only, forward_reverse
+  # Reverse-shock shell model: thick (default) or thin.
+  reverse_shell: thick
+  # For a thin reverse shock, fit g within its theoretical bounds.
+  # Otherwise g is fixed to the midpoint of those bounds.
+  fit_g: false
   # If true, attenuate reverse-shock photons by the forward-shock absorption screen.
   # Defaults to false when omitted.
   apply_fs_absorption: false
@@ -207,6 +214,7 @@ STANDARD_OUTPUT_PARAMETERS = [
     ("nua0_rev", "nua_rev"),
     ("num0_rev", "num_rev"),
     ("nuc0_rev", "nuc_rev"),
+    ("g", "g"),
 ]
 
 
@@ -262,6 +270,7 @@ CORNER_LABELS = {
     "num_0": r"$\nu_{m,0}\ (\mathrm{GHz})$",
     "nuc_0": r"$\nu_{c,0}\ (\mathrm{GHz})$",
     "t_j": r"$t_j\ (\mathrm{d})$",
+    "g": r"$g$",
 }
 
 CORNER_SCALE = {
@@ -857,8 +866,40 @@ def normalize_config(cfg):
         raise ValueError("❌ config.yaml must specify model.type (forward_only or forward_reverse)")
 
     # 🔢 model params
-    cfg["model"]["k"] = int(cfg["model"]["k"])
+    k = float(cfg["model"]["k"])
+    if k not in (0.0, 2.0):
+        raise ValueError("❌ model.k must be 0 (homogeneous medium) or 2 (wind medium)")
+    cfg["model"]["k"] = int(k)
     cfg["model"]["p"] = float(cfg["model"]["p"])
+
+    reverse_shell = str(cfg["model"].get("reverse_shell", "thick")).lower()
+    if reverse_shell not in ("thick", "thin"):
+        raise ValueError("❌ model.reverse_shell must be 'thick' or 'thin'")
+    cfg["model"]["reverse_shell"] = reverse_shell
+
+    fit_g = cfg["model"].get("fit_g", False)
+    if not isinstance(fit_g, bool):
+        raise ValueError("❌ model.fit_g must be true or false")
+    cfg["model"]["fit_g"] = fit_g
+
+    thin_reverse = (
+        cfg["model"]["type"] == "forward_reverse"
+        and reverse_shell == "thin"
+    )
+    if thin_reverse:
+        g_default = reverse_shock_default_g(k)
+        g_lower, g_upper = reverse_shock_g_bounds(k)
+        cfg["fit"]["initial_guess"]["g"] = g_default
+        cfg["fit"]["bounds"]["g"] = (
+            [g_lower, g_upper] if fit_g else [g_default, g_default]
+        )
+    elif fit_g:
+        warnings.warn(
+            "model.fit_g is ignored unless model.type is 'forward_reverse' "
+            "and model.reverse_shell is 'thin'.",
+            UserWarning,
+        )
+        cfg["model"]["fit_g"] = False
 
     # 🔢 burst
     cfg["burst"]["t0"] = float(cfg["burst"]["t0"])
@@ -903,7 +944,8 @@ def main():
     cfg = normalize_config(cfg)
     print("📄 Config loaded")
     if cfg["model"]["type"] == "forward_reverse":
-        print("⚠️ Reverse-shock model assumes a thick-shell reverse shock.")
+        shell = cfg["model"]["reverse_shell"]
+        print(f"ℹ️ Using the {shell}-shell reverse-shock model.")
     # 📥 load + prep data
     df = load_data(cfg)
     print(f"📊 Loaded {len(df)} data points")

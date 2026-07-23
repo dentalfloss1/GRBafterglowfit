@@ -20,6 +20,11 @@ data:
 
 model:
   type: forward_only   # options: forward_only, forward_reverse
+  # Reverse-shock shell model: thick (default) or thin.
+  reverse_shell: thick
+  # For a thin reverse shock, fit g within its theoretical bounds.
+  # Otherwise g is fixed to the midpoint of those bounds.
+  fit_g: false
   # If true, attenuate reverse-shock photons by the forward-shock absorption screen.
   # Defaults to false when omitted.
   apply_fs_absorption: false

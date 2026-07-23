@@ -84,6 +84,7 @@ FIXED_PARAMETER_LABELS = {
     "nua0_rev": r"$\nu_{a,0,\mathrm{rev}}$",
     "num0_rev": r"$\nu_{m,0,\mathrm{rev}}$",
     "nuc0_rev": r"$\nu_{c,0,\mathrm{rev}}$",
+    "g": r"$g$",
     "t_j": r"$t_j$",
 }
 
@@ -168,6 +169,8 @@ def _fixed_parameter_affects_plot(key, cfg, theta, times, freq, components):
             cfg["model"]["k"],
             cfg["burst"]["t0_rev"],
             p=cfg["model"]["p"],
+            reverse_shell=cfg["model"].get("reverse_shell", "thick"),
+            g=params.get("g"),
         )
         return _frequency_depends_on_break(freq, breaks[reverse_break_keys[key]])
 

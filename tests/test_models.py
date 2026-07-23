@@ -9,6 +9,8 @@ from grbfit.models import (
     forward_shock_flux,
     reverse_shock,
     reverse_shock_break_frequencies,
+    reverse_shock_default_g,
+    reverse_shock_g_bounds,
 )
 
 
@@ -179,6 +181,93 @@ class ForwardReverseModelAbsorptionTests(unittest.TestCase):
 
 
 class ReverseShockRegimeTests(unittest.TestCase):
+    def test_thick_shell_remains_the_default(self):
+        times = np.array([0.5, 1.0, 2.0])
+        freqs = np.array([1.0, 1e4, 1e10])
+        args = ((times, freqs), 1e-3, 10.0, 1e5, 1e12, 2, 1.0)
+
+        default = reverse_shock(*args, p=2.2)
+        explicit = reverse_shock(*args, p=2.2, reverse_shell="thick")
+
+        np.testing.assert_allclose(default, explicit, rtol=0, atol=0)
+
+    def test_thin_shell_g_bounds_and_midpoints(self):
+        self.assertEqual(reverse_shock_g_bounds(0), (1.5, 3.5))
+        self.assertEqual(reverse_shock_g_bounds(2), (0.5, 1.5))
+        self.assertEqual(reverse_shock_default_g(0), 2.5)
+        self.assertEqual(reverse_shock_default_g(2), 1.0)
+
+    def test_break_frequencies_follow_thin_shell_indices(self):
+        p = 2.2
+        t0 = 1.0
+        nua0 = 10.0
+        num0 = 1e6
+        nuc0 = 1e12
+        times = np.array([t0, 2 * t0])
+        freqs = np.ones_like(times)
+
+        for k, g in ((0, 2.5), (2, 1.0)):
+            ba = -3 * (11 * g + 12) / (35 * (2 * g + 1))
+            bm = -3 * (5 * g + 8) / (7 * (2 * g + 1))
+            nua, num, nuc = reverse_shock_break_frequencies(
+                (times, freqs),
+                nua0,
+                num0,
+                nuc0,
+                k,
+                t0,
+                p=p,
+                reverse_shell="thin",
+                g=g,
+            )
+
+            self.assertAlmostEqual(np.log2(nua[1] / nua[0]), ba)
+            self.assertAlmostEqual(np.log2(num[1] / num[0]), bm)
+            self.assertAlmostEqual(np.log2(nuc[1] / nuc[0]), bm)
+
+    def test_thin_shell_flux_is_continuous_across_nua_num_crossing(self):
+        k = 2
+        g = 1.0
+        p = 2.2
+        t0 = 1.0
+        nua0 = 10.0
+        num0 = 100.0
+        nuc0 = 1e8
+        ba = -3 * (11 * g + 12) / (35 * (2 * g + 1))
+        bm = -3 * (5 * g + 8) / (7 * (2 * g + 1))
+        t_cross = t0 * (num0 / nua0) ** (1 / (ba - bm))
+        times = t_cross * np.array([0.999, 1.0, 1.001])
+        freqs = np.full_like(times, 8.0)
+
+        flux = reverse_shock(
+            (times, freqs),
+            1e-3,
+            nua0,
+            num0,
+            nuc0,
+            k,
+            t0,
+            p=p,
+            reverse_shell="thin",
+            g=g,
+        )
+
+        self.assertLess(np.max(flux) / np.min(flux), 1.01)
+
+    def test_thin_shell_rejects_g_outside_theoretical_range(self):
+        with self.assertRaisesRegex(ValueError, "outside the theoretical range"):
+            reverse_shock(
+                (np.array([1.0]), np.array([10.0])),
+                1e-3,
+                1.0,
+                100.0,
+                1e8,
+                2,
+                1.0,
+                reverse_shell="thin",
+                g=2.0,
+            )
+
     def test_break_frequencies_follow_thick_shell_indices(self):
         k = 2
         p = 2.2

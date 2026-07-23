@@ -6,6 +6,7 @@ from grbfit.models import (
     forward_shock_flux,
     forward_shock_absorption_tau,
     reverse_shock,
+    reverse_shock_default_g,
 )
 
 
@@ -76,6 +77,8 @@ def model_parameter_keys(cfg):
             "num_0",
             "nuc_0",
         ]
+        if cfg["model"].get("reverse_shell", "thick") == "thin":
+            keys.append("g")
 
     tj = cfg["fit"]["initial_guess"].get("t_j", None)
     
@@ -163,6 +166,8 @@ def evaluate_model_components(cfg, theta, ivar):
     t0 = cfg["burst"]["t0"]
     t_j = params.get("t_j", None)
     apply_fs_absorption = cfg["model"].get("apply_fs_absorption", False)
+    reverse_shell = cfg["model"].get("reverse_shell", "thick")
+    g = params.get("g", reverse_shock_default_g(k))
 
     forward = forward_shock_flux(
         ivar,
@@ -189,6 +194,8 @@ def evaluate_model_components(cfg, theta, ivar):
             k,
             cfg["burst"]["t0_rev"],
             p,
+            reverse_shell=reverse_shell,
+            g=g,
         )
         reverse_observed = reverse_intrinsic
         if apply_fs_absorption:
@@ -217,6 +224,7 @@ def make_model(cfg):
     t0 = cfg["burst"]["t0"]
     t0_rev = cfg["burst"]["t0_rev"]
     apply_fs_absorption = cfg["model"].get("apply_fs_absorption", False)
+    reverse_shell = cfg["model"].get("reverse_shell", "thick")
 
     if cfg["model"]["type"] == "forward_only":
         def model(theta, ivar):
@@ -253,6 +261,8 @@ def make_model(cfg):
                 cfg["model"]["p"],
                 t_j=params.get("t_j", None),
                 apply_fs_absorption=apply_fs_absorption,
+                reverse_shell=reverse_shell,
+                g=params.get("g", reverse_shock_default_g(k)),
             )
     return model
 

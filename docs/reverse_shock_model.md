@@ -1,9 +1,31 @@
 # Reverse-Shock Model
 
 The reverse-shock component implemented in `grbfit.models.reverse_shock`
-is the relativistic, thick-shell reverse shock from Table 5 of the
-reference table in this repository. Thin-shell reverse shocks are not
-implemented in this pass.
+supports both the relativistic thick-shell and Newtonian thin-shell
+reverse shocks from Table 5 of the reference table in this repository.
+The thick-shell model remains the default for backward compatibility.
+
+Select the model in `config.yaml` with:
+
+```yaml
+model:
+  type: forward_reverse
+  reverse_shell: thin  # thick or thin; defaults to thick
+  fit_g: true          # only used by the thin-shell model
+```
+
+For a thin shell, the allowed Lorentz-factor index is
+
+```text
+g_min = (3 - k) / 2
+g_max = (7 - 2k) / 2
+```
+
+When `fit_g` is false, `g` is fixed to the midpoint of this interval.
+When `fit_g` is true, that midpoint is the initial value and the interval
+provides the fit bounds. Users do not need to add `g` to `initial_guess`
+or `bounds`. The supported environments are `k: 0` and `k: 2`, giving
+fixed midpoint values `g = 2.5` and `g = 1.0`, respectively.
 
 The fitted reverse-shock parameters are:
 
@@ -11,8 +33,9 @@ The fitted reverse-shock parameters are:
 - `nua0_rev`: `nu_a` at `t0_rev`
 - `num0_rev`: `nu_m` at `t0_rev`
 - `nuc0_rev`: `nu_c` at `t0_rev`
+- `g`: thin-shell Lorentz-factor index, when `fit_g` is true
 
-The model supports these thick-shell spectral orderings:
+Both shell models support these spectral orderings:
 
 - `nu_a < nu_m < nu_c`
 - `nu_a < nu_c < nu_m`
@@ -21,7 +44,7 @@ The model supports these thick-shell spectral orderings:
 Orderings with `nu_a > nu_c` are not implemented and raise `ValueError`
 instead of silently extrapolating.
 
-## Temporal Evolution
+## Thick-Shell Temporal Evolution
 
 For every supported thick-shell reverse-shock regime, Table 5 gives:
 
@@ -44,6 +67,29 @@ the absorption break evolves as:
 ```text
 nu_a: -[p * (73 - 14k) + 2 * (67 - 14k)]
        / [12 * (4 - k) * (p + 4)]
+```
+
+## Thin-Shell Temporal Evolution
+
+For every supported thin-shell reverse-shock regime, Table 5 gives:
+
+```text
+Fnu,max: -(11g + 12) / [7 * (2g + 1)]
+nu_m:    -3 * (5g + 8) / [7 * (2g + 1)]
+nu_c:    -3 * (5g + 8) / [7 * (2g + 1)]
+```
+
+For the two low-absorption orderings:
+
+```text
+nu_a: -3 * (11g + 12) / [35 * (2g + 1)]
+```
+
+For the self-absorbed slow-cooling ordering:
+
+```text
+nu_a: -[3p * (5g + 8) + 8 * (4g + 5)]
+       / [7 * (2g + 1) * (p + 4)]
 ```
 
 ## Spectral Regimes
@@ -149,8 +195,8 @@ spectral regime.
 
 - `reverse_shock_break_frequencies()` returns the time-dependent
   `(nu_a, nu_m, nu_c)` values for plotting and detectability checks.
-- `_reverse_shock_thick_shell_indices()` contains the Table 5 temporal
-  indices.
+- `_reverse_shock_temporal_indices()` selects the thick- or thin-shell
+  Table 5 temporal indices.
 - `_reverse_shock_spectrum()` contains the spectral shape and
   normalization for each supported ordering.
 - `_reverse_shock_branch_state()` chooses the active regime at a given
