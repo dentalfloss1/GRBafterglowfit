@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import warnings
 
 SECONDS_PER_DAY = 24 * 60 * 60
 KEV_TO_HZ = 2.417989242e17
@@ -70,8 +71,17 @@ def load_swift_data(filepath, xrt_photon_index, absorption_ratio):
             line_upper = line.upper()
 
             if not reading_pc:
-                if line.startswith("!") and line[1:].strip().lower() == "pc_incbad":
-                    reading_pc = True
+                if line.startswith("!"):
+                    section = line[1:].strip().lower()
+                    if section == "pc":
+                        reading_pc = True
+                    elif section == "pc_incbad":
+                        warnings.warn(
+                            "You are including XRT data marked as bad",
+                            UserWarning,
+                            stacklevel=2,
+                        )
+                        reading_pc = True
                 continue
 
             if line.startswith("!") or line_upper.startswith("NO"):
