@@ -22,27 +22,33 @@ from grbfit.models import forward_shock_break_frequencies, reverse_shock_break_f
 SENSITIVITY_PRESETS = {
     0.8: {
         "threshold1": 7.11,
-        "threshold1_label": r"3$\sigma$ SKA-Mid Band 1",
+        "threshold1_label": r"3$\sigma$ SKA-Mid Band 1 (0.8 GHz)",
         "threshold2": 25.8,
-        "threshold2_label": r"3$\sigma$ MeerKAT",
+        "threshold2_label": r"3$\sigma$ MeerKAT (0.8 GHz)",
     },
     1.3: {
         "threshold1": 3.45,
-        "threshold1_label": r"3$\sigma$ SKA-Mid Band 2",
+        "threshold1_label": r"3$\sigma$ SKA-Mid Band 2 (1.3 GHz)",
         "threshold2": 19.8,
-        "threshold2_label": r"3$\sigma$ MeerKAT",
+        "threshold2_label": r"3$\sigma$ MeerKAT (1.3 GHz)",
     },
     6.55: {
         "threshold1": 2.112,
-        "threshold1_label": r"3$\sigma$ SKA-Mid Band 5a",
+        "threshold1_label": r"3$\sigma$ SKA-Mid Band 5a (6.55 GHz)",
         "threshold2": 69.0,
-        "threshold2_label": r"3$\sigma$ ATCA",
+        "threshold2_label": r"3$\sigma$ ATCA (5.5 GHz)",
     },
 }
 
 
 def _format_freq(freq):
     return f"{freq:g}"
+
+
+def _threshold_name_for_title(label):
+    """Return a compact instrument/band name from a detailed legend label."""
+    name = label.replace(r"3$\sigma$ ", "")
+    return name.split(" (", maxsplit=1)[0]
 
 
 def _preset_for_frequency(freq):
@@ -310,7 +316,14 @@ def make_detectability_plot(
         return np.where((values > 0) & (values >= ymin), values, np.nan)
 
     fig, ax = plt.subplots()
-    ax.axhline(threshold1, linestyle=":", label=threshold1_label, color="green")
+    ax.axhline(
+        threshold1,
+        linestyle="-",
+        linewidth=2.5,
+        label=threshold1_label,
+        color="navy",
+        zorder=3,
+    )
     ax.axhline(threshold2, linestyle=":", label=threshold2_label, color="black")
     ax.plot(times, total_microjy, alpha=1, color="black", linestyle="-", label="Model")
     ax.plot(
@@ -336,10 +349,10 @@ def make_detectability_plot(
     ax.set_ylim(ymin, ymax)
     ax.set_xlabel("Days post-trigger")
     ax.set_ylabel(r"$\mu Jy/BM$")
-    ax.grid(True)
+    ax.grid(True, color="0.82", linewidth=0.7, alpha=0.65, zorder=0)
 
-    threshold1_name = threshold1_label.replace(r"3$\sigma$ ", "")
-    threshold2_name = threshold2_label.replace(r"3$\sigma$ ", "")
+    threshold1_name = _threshold_name_for_title(threshold1_label)
+    threshold2_name = _threshold_name_for_title(threshold2_label)
     det1_title = _format_detectable_duration(det1days, det1_lower_bound)
     det2_title = _format_detectable_duration(det2days, det2_lower_bound)
     ax.set_title(
