@@ -35,6 +35,10 @@ The fitted reverse-shock parameters are:
 - `nuc0_rev`: `nu_c` at `t0_rev`
 - `g`: thin-shell Lorentz-factor index, when `fit_g` is true
 
+The electron index `p` is shared by the forward and reverse shocks. It is
+fixed at the configured value by default and can be fitted using
+`fit.initial_guess.p` and non-equal `fit.bounds.p` values.
+
 Both shell models support these spectral orderings:
 
 - `nu_a < nu_m < nu_c`

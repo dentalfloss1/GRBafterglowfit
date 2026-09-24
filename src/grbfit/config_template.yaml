@@ -29,10 +29,11 @@ model:
   # Defaults to false when omitted.
   apply_fs_absorption: false
   k: 2
-  p: 2.2
 
 fit:
   initial_guess:
+    # Electron index; equal bounds keep it fixed.
+    p: 2.2
     # Flux normalizations are in Jy.
     f0: 1e-3
     f0_rev: 5e-5
@@ -48,6 +49,7 @@ fit:
   bounds:
     # Set lower and upper equal to remove a parameter from fitting.
     # The fixed value will be the corresponding initial_guess value.
+    p: [2.2, 2.2]
     # Flux normalization bounds are in Jy.
     f0: [1e-6, 1]
     f0_rev: [3e-5, 1e5]

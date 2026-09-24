@@ -1,3 +1,4 @@
+import argparse
 import yaml  # 📄 config loader
 from importlib import resources
 import numpy as np  # 🔢 math engine
@@ -56,10 +57,11 @@ model:
   # Defaults to false when omitted.
   apply_fs_absorption: false
   k: 2
-  p: 2.2
 
 fit:
   initial_guess:
+    # Electron index; equal bounds keep it fixed.
+    p: 2.2
     # Flux normalizations are in Jy.
     f0: 1e-3
     f0_rev: 5e-5
@@ -75,6 +77,7 @@ fit:
   bounds:
     # Set lower and upper equal to remove a parameter from fitting.
     # The fixed value will be the corresponding initial_guess value.
+    p: [2.2, 2.2]
     # Flux normalization bounds are in Jy.
     f0: [1e-6, 1]
     f0_rev: [3e-5, 1e5]
@@ -252,6 +255,12 @@ def write_standardized_fit_csv(cfg, samples, goodness_metrics, path="fit_summary
     row["AIC"] = goodness_metrics["AIC"]
     row["BIC"] = goodness_metrics["BIC"]
 
+    p, perrneg, perrpos = summarize_output_parameter(cfg, samples, "p")
+    fieldnames.extend(["p", "perrneg", "perrpos"])
+    row["p"] = p
+    row["perrneg"] = perrneg
+    row["perrpos"] = perrpos
+
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -271,6 +280,7 @@ CORNER_LABELS = {
     "nuc_0": r"$\nu_{c,0}\ (\mathrm{GHz})$",
     "t_j": r"$t_j\ (\mathrm{d})$",
     "g": r"$g$",
+    "p": r"$p$",
 }
 
 CORNER_SCALE = {
@@ -870,7 +880,14 @@ def normalize_config(cfg):
     if k not in (0.0, 2.0):
         raise ValueError("❌ model.k must be 0 (homogeneous medium) or 2 (wind medium)")
     cfg["model"]["k"] = int(k)
-    cfg["model"]["p"] = float(cfg["model"]["p"])
+    model_p = cfg["model"].get("p")
+    fit_p = cfg["fit"]["initial_guess"].get("p")
+    if model_p is not None and fit_p is not None and float(model_p) != float(fit_p):
+        raise ValueError("❌ model.p and fit.initial_guess.p must agree when both are set")
+    p = float(fit_p if fit_p is not None else model_p if model_p is not None else 2.2)
+    cfg["model"]["p"] = p
+    cfg["fit"]["initial_guess"]["p"] = p
+    cfg["fit"]["bounds"].setdefault("p", [p, p])
 
     reverse_shell = str(cfg["model"].get("reverse_shell", "thick")).lower()
     if reverse_shell not in ("thick", "thin"):
@@ -928,7 +945,27 @@ def normalize_config(cfg):
     return cfg
 
 # 🚀 Main execution pipeline
-def main():
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Fit a GRB afterglow using config.yaml in the current directory."
+    )
+    parser.add_argument(
+        "--quick", action="store_true",
+        help="Exploratory fixed-length MCMC: 100 burn-in and 300 production steps."
+    )
+    return parser.parse_args(argv)
+
+
+def apply_quick_mode(cfg):
+    """Use short sampler settings for this run without changing config.yaml."""
+    cfg["fit"]["mcmc_mode"] = "fixed"
+    cfg["fit"]["burn_in"] = 100
+    cfg["fit"]["nsteps"] = 300
+    return cfg
+
+
+def main(argv=None):
+    args = parse_args(argv)
     print("🚀 Starting GRB fit pipeline...")
 
     # 📂 check for config file
@@ -942,6 +979,9 @@ def main():
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
     cfg = normalize_config(cfg)
+    if args.quick:
+        cfg = apply_quick_mode(cfg)
+        print("⚡ Quick mode: 100 burn-in + 300 production steps (fixed length)")
     print("📄 Config loaded")
     if cfg["model"]["type"] == "forward_reverse":
         shell = cfg["model"]["reverse_shell"]

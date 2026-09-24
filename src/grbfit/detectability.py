@@ -91,6 +91,7 @@ FIXED_PARAMETER_LABELS = {
     "num0_rev": r"$\nu_{m,0,\mathrm{rev}}$",
     "nuc0_rev": r"$\nu_{c,0,\mathrm{rev}}$",
     "g": r"$g$",
+    "p": r"$p$",
     "t_j": r"$t_j$",
 }
 
@@ -152,7 +153,7 @@ def _fixed_parameter_affects_plot(key, cfg, theta, times, freq, components):
             params["nuc_0"],
             cfg["model"]["k"],
             cfg["burst"]["t0"],
-            p=cfg["model"]["p"],
+            p=params.get("p", cfg["model"]["p"]),
         )
         return _frequency_depends_on_break(freq, breaks[forward_break_keys[key]])
 
@@ -174,7 +175,7 @@ def _fixed_parameter_affects_plot(key, cfg, theta, times, freq, components):
             params["nuc0_rev"],
             cfg["model"]["k"],
             cfg["burst"]["t0_rev"],
-            p=cfg["model"]["p"],
+            p=params.get("p", cfg["model"]["p"]),
             reverse_shell=cfg["model"].get("reverse_shell", "thick"),
             g=params.get("g"),
         )
@@ -193,6 +194,8 @@ def fixed_parameter_warnings(
 ):
     warnings = []
     for key, info in artifact["fit"]["parameters"].items():
+        if key == "p":
+            continue
         if info.get("status") != "fixed":
             continue
         if all(item is not None for item in (cfg, theta, times, freq, components)):

@@ -59,6 +59,15 @@ def summarize_parameter(cfg, samples, key):
             "unit": PARAMETER_UNITS.get(key),
         }
 
+    if key == "p":
+        return {
+            "value": float(cfg["model"]["p"]),
+            "errneg": None,
+            "errpos": None,
+            "status": "fixed",
+            "unit": None,
+        }
+
     return {
         "value": None,
         "errneg": None,
@@ -91,7 +100,7 @@ def build_model_fit_artifact(cfg, samples, goodness_metrics):
         "model": {
             "type": cfg["model"]["type"],
             "k": cfg["model"]["k"],
-            "p": cfg["model"]["p"],
+            "p": parameters["p"]["value"],
             "reverse_shell": cfg["model"].get("reverse_shell", "thick"),
             "fit_g": cfg["model"].get("fit_g", False),
         },

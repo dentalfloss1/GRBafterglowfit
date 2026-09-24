@@ -80,6 +80,7 @@ def model_parameter_keys(cfg):
         if cfg["model"].get("reverse_shell", "thick") == "thin":
             keys.append("g")
 
+    keys.append("p")
     tj = cfg["fit"]["initial_guess"].get("t_j", None)
     
     if tj is not None:
@@ -89,6 +90,9 @@ def model_parameter_keys(cfg):
 
 
 def build_param_vector(cfg):
+    # Direct callers may pass a legacy config without normalize_config().
+    p = cfg["fit"]["initial_guess"].setdefault("p", cfg["model"].get("p", 2.2))
+    cfg["fit"]["bounds"].setdefault("p", [p, p])
     model_keys = model_parameter_keys(cfg)
     tj = cfg["fit"]["initial_guess"].get("t_j", None)
 
@@ -162,7 +166,7 @@ def evaluate_model_components(cfg, theta, ivar):
     """Evaluate total, forward, and reverse model components in Jy."""
     params = parameter_dict_from_theta(cfg, theta)
     k = cfg["model"]["k"]
-    p = cfg["model"]["p"]
+    p = params.get("p", cfg["model"].get("p", 2.2))
     t0 = cfg["burst"]["t0"]
     t_j = params.get("t_j", None)
     apply_fs_absorption = cfg["model"].get("apply_fs_absorption", False)
@@ -220,7 +224,6 @@ def evaluate_model_components(cfg, theta, ivar):
 
 def make_model(cfg):
     k = cfg["model"]["k"]
-    p = cfg["model"]["p"]
     t0 = cfg["burst"]["t0"]
     t0_rev = cfg["burst"]["t0_rev"]
     apply_fs_absorption = cfg["model"].get("apply_fs_absorption", False)
@@ -237,7 +240,7 @@ def make_model(cfg):
                                  params["nuc_0"],
                                  cfg["model"]["k"],
                                  cfg["burst"]["t0"],
-                                 cfg["model"]["p"],
+                                 params.get("p", cfg["model"].get("p", 2.2)),
                                  t_j=params.get("t_j", None),
                              )
 
@@ -258,7 +261,7 @@ def make_model(cfg):
                 cfg["model"]["k"],
                 cfg["burst"]["t0"],
                 cfg["burst"]["t0_rev"],
-                cfg["model"]["p"],
+                params.get("p", cfg["model"].get("p", 2.2)),
                 t_j=params.get("t_j", None),
                 apply_fs_absorption=apply_fs_absorption,
                 reverse_shell=reverse_shell,

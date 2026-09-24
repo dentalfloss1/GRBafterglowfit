@@ -15,7 +15,7 @@ The fitted forward-shock parameters are:
 - `num_0`: `nu_m` at `t0`
 - `nuc_0`: `nu_c` at `t0`
 
-The model also uses fixed `k`, fixed `p`, and optional `t_j`.
+The model also uses fixed `k`, optional fitted `p`, and optional `t_j`.
 
 ## Supported Non-Jet Regimes
 
