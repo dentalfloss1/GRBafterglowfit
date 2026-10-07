@@ -394,8 +394,10 @@ def make_detectability_plot(
 
     det1_console = _format_detectable_duration(det1days, det1_lower_bound, decimals=1)
     det2_console = _format_detectable_duration(det2days, det2_lower_bound, decimals=1)
-    print(f"Detectable duration above {threshold1_label}: {det1_console} days")
-    print(f"Detectable duration above {threshold2_label}: {det2_console} days")
+    threshold1_console_label = threshold1_label.replace(r"$\sigma$", "sigma")
+    threshold2_console_label = threshold2_label.replace(r"$\sigma$", "sigma")
+    print(f"Detectable duration above {threshold1_console_label} ({threshold1:g} microJy): {det1_console} days")
+    print(f"Detectable duration above {threshold2_console_label} ({threshold2:g} microJy): {det2_console} days")
     print(f"Detectability plot saved to {output}")
 
     return {
