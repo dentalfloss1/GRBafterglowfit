@@ -186,6 +186,21 @@ def prepare_fit_data(df, cfg):
         df["freq_rest"] = df["freq"]
 
     fitdata = df.copy()
+    # Minimum observed frequency (GHz); excluded rows remain available to plot.
+    min_freq = cfg["fit"].get("min_freq")
+    if min_freq is not None:
+        try:
+            min_freq = float(min_freq)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "fit.min_freq must be a finite, non-negative frequency in GHz."
+            ) from exc
+        if not np.isfinite(min_freq) or min_freq < 0:
+            raise ValueError(
+                "fit.min_freq must be a finite, non-negative frequency in GHz."
+            )
+        fitdata = fitdata[fitdata["freq"] >= min_freq]
+
     # remove BAT
     fitdata = fitdata[fitdata["instrument"] != "BAT"]
     
@@ -213,6 +228,11 @@ def prepare_fit_data(df, cfg):
 
     # ✅ detections (used for fitting)
     det = fitdata[is_detection]
+    if det.empty:
+        raise ValueError(
+            "No detections remain for fitting after data cuts; "
+            "check fit.min_freq and other selection settings."
+        )
 
     t = det["obsdate"].values
     nu = det["freq"].values

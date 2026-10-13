@@ -6,6 +6,20 @@ This code uses the standard GRB afterglow models in either an ISM-like ($k=0$) o
 
 To fit `p`, set `fit.initial_guess.p` to a starting value and give `fit.bounds.p` distinct lower and upper values, for example `[2.0, 3.0]`. The template fixes `p` at 2.2 with bounds `[2.2, 2.2]`. Existing configs with `model.p` and no `fit` entry for `p` continue to use that fixed value. If both initial values are provided, they must agree.
 
+To exclude frequencies below 50 GHz from fitting, add `min_freq` to the `fit`
+section of `config.yaml`:
+
+```yaml
+fit:
+  min_freq: 50
+```
+
+This cutoff uses observed frequencies in GHz, regardless of redshift. Points
+at exactly 50 GHz remain eligible for fitting, subject to the other data cuts.
+Lower-frequency detections and upper limits remain on the posterior model plot
+for reference; excluded detections use open markers. Omit `min_freq` or set it
+to `null` to disable the cutoff.
+
 ## Command line
 
 Run `grbfit` from a directory containing `config.yaml`. If that file is absent,

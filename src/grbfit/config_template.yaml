@@ -62,6 +62,9 @@ fit:
     nuc_0: [1e8, 2e9]
     # Jet-break time bounds are in observer-frame days.
     t_j: [1, 1]
+  # Minimum observed frequency in GHz (inclusive). Lower frequencies are plotted
+  # for reference but excluded from fitting. Use null for no cutoff, or e.g. 50.
+  min_freq: null
   max_rest_freq: 2.47e6 # GHz, FUV in rest frame, only used in z is defined.
   fit_xrt: false
   # MCMC controls. Use mcmc_mode: fixed for a quick fixed-length run.
