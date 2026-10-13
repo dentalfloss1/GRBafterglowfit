@@ -761,6 +761,36 @@ def plot_posterior_models(cfg, samples, xdata, ydata, yerr, upper_df, excluded_d
 
 def plot_best_fit_residuals(cfg, samples, xdata, ydata, yerr, instrument):
     print("📉 Generating best-fit residual plot...")
+    _plot_residuals(cfg, samples, xdata, ydata, yerr, instrument)
+
+
+def plot_non_fitted_residuals(cfg, samples, excluded_df):
+    """Compare excluded detections to the fitted posterior-median model."""
+    filename = "residuals_non_fitted.png"
+    if excluded_df is None or excluded_df.empty:
+        print(f"ℹ️ No non-fitted detections available; skipping {filename}")
+        return
+
+    # Match the fit's detection rule before combining err and rms: sentinel
+    # upper limits must not become detections when their errors are squared.
+    det = excluded_df[(excluded_df["flux"] > 0) & (excluded_df["err"] > 0)]
+    if det.empty:
+        print(f"ℹ️ No non-fitted detections available; skipping {filename}")
+        return
+
+    print("📉 Generating non-fitted data residual plot...")
+    _plot_residuals(
+        cfg, samples,
+        (det["obsdate"].to_numpy(), det["freq"].to_numpy()),
+        det["flux"].to_numpy() * 1e-6,
+        np.sqrt(det["err"]**2 + det["rms"]**2).to_numpy() * 1e-6,
+        det["instrument"].to_numpy(),
+        filename=filename, data_label="non-fitted",
+    )
+
+
+def _plot_residuals(cfg, samples, xdata, ydata, yerr, instrument,
+                    filename="residuals.png", data_label="fitted"):
 
     def positive_mask(values):
         values = np.asarray(values)
@@ -780,7 +810,7 @@ def plot_best_fit_residuals(cfg, samples, xdata, ydata, yerr, instrument):
     )
 
     if not np.any(valid):
-        print("⚠️ No valid fitted detections available for residuals; skipping residuals.png")
+        print(f"⚠️ No valid {data_label} detections available for residuals; skipping {filename}")
         return
 
     t_valid = t[valid]
@@ -796,7 +826,7 @@ def plot_best_fit_residuals(cfg, samples, xdata, ydata, yerr, instrument):
 
     finite = np.isfinite(sigma_residual) & np.isfinite(log_sigma) & (log_sigma > 0)
     if not np.any(finite):
-        print("⚠️ Residual uncertainties are not finite; skipping residuals.png")
+        print(f"⚠️ Residual uncertainties are not finite; skipping {filename}")
         return
 
     t_valid = t_valid[finite]
@@ -863,11 +893,13 @@ def plot_best_fit_residuals(cfg, samples, xdata, ydata, yerr, instrument):
         ax.set_ylim(-max_abs_residual, max_abs_residual)
 
     axes[-1].set_xlabel("Days")
+    if data_label == "non-fitted":
+        fig.suptitle("Non-fitted data vs. fitted posterior-median model")
     plt.tight_layout()
-    plt.savefig("residuals.png", dpi=200)
+    plt.savefig(filename, dpi=200)
     plt.close()
 
-    print("✅ residuals.png saved")
+    print(f"✅ {filename} saved")
 
 
 def normalize_config(cfg):
@@ -1035,6 +1067,7 @@ def main(argv=None):
 
     # 📉 best-fit residuals
     plot_best_fit_residuals(cfg, flat_samples, xdata, ydata, yerr, instrument)
+    plot_non_fitted_residuals(cfg, flat_samples, excluded_df)
 
     write_fit_report(cfg, goodness_of_fit_report)
     write_standardized_fit_csv(cfg, flat_samples, goodness_metrics)

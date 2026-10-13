@@ -20,6 +20,17 @@ Lower-frequency detections and upper limits remain on the posterior model plot
 for reference; excluded detections use open markers. Omit `min_freq` or set it
 to `null` to disable the cutoff.
 
+Each run saves `residuals.png` for fitted detections and
+`residuals_non_fitted.png` for detections excluded by the fitting cuts, when
+valid excluded detections are available. Both use the same posterior-median
+model, evaluated at each observation's time and frequency, with no refitting.
+Residuals are `(log10(observed) - log10(model)) / sigma_log10`, using
+`sigma_log10 = sqrt(err² + rms²) / (flux * ln(10))`. Positive residuals mean
+the data lie above the model; values near zero indicate agreement. These
+uncertainties describe the measurements and do not include posterior model
+uncertainty. Upper limits remain on `posterior_models.png` and are omitted
+from both residual plots.
+
 ## Command line
 
 Run `grbfit` from a directory containing `config.yaml`. If that file is absent,
