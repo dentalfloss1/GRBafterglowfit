@@ -45,3 +45,45 @@ grbfit --quick
 steps for an exploratory fit. It overrides the sampler settings in memory for
 that run; `config.yaml` is not changed. Run `grbfit` without the flag for the
 configured sampler settings.
+
+### Fitting extinction-affected bands above the cutoff
+
+By default, bands at or above `fit.max_rest_freq` remain excluded. To fit
+non-X-ray bands with at least three detections after the time and minimum
+frequency cuts, add:
+
+```yaml
+fit:
+  fit_above_max_rest_freq: true
+  extinction_correction_bounds: [1, 1000]
+  extinction_correction_initial: 2
+```
+
+This requires a defined `burst.z` and a finite positive `fit.max_rest_freq`
+(in rest-frame GHz). Observed frequencies within a 1% span are grouped into a band,
+pooling instruments and detections. Groups are built in increasing frequency
+order, with the highest frequency at most 1.01 times the lowest; adjacent
+matches cannot chain into a wider band. For example, 4.56e14 Hz and 4.6e14 Hz
+(456000 and 460000 GHz in the input files) share one correction. Original
+frequencies are retained when evaluating the intrinsic model. Grouping applies
+to the non-X-ray data above the cutoff after the other cuts. Upper limits do not count toward eligibility and are not fitted.
+Bands with fewer than three detections remain plotted for reference. X-rays
+remain controlled by `fit_xrt` and receive no extra correction.
+
+Each eligible band gets an independent, time-independent correction `C >= 1`,
+representing the upward correction to observed flux for extinction. The fit
+compares the unchanged measurements and errors to `intrinsic_model / C`.
+The prior is uniform in `log10(C)` within the shared bounds (default 1–1000),
+with initial value 2. Bounds must satisfy `1 <= lower < initial < upper`.
+This is a per-band correction, not an extinction-curve or redshift fit.
+
+Parameters named `extinction_correction_1`, etc. are assigned in increasing
+frequency order. The lowest frequency represents each group in
+`fit.extinction_bands`, and all member frequencies are saved in
+`fit.extinction_band_frequencies`. JSON parameter summaries include both
+`observed_frequency_GHz` and `observed_frequencies_GHz`. Plots, residuals, and
+exported-model evaluations apply the shared correction at every saved member
+frequency, without interpolation to other frequencies. Older saved fits with
+single-frequency corrections remain supported. The standardized summary CSV retains its
+existing columns. Omitted or false `fit_above_max_rest_freq` preserves the
+existing selection and model behavior.

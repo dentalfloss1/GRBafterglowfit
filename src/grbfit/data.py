@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import warnings
+from grbfit.extinction import PARAMETER_PREFIX, validate_extinction_config, group_band_frequencies
 
 SECONDS_PER_DAY = 24 * 60 * 60
 KEV_TO_HZ = 2.417989242e17
@@ -176,7 +177,12 @@ def load_data(cfg):
     return data
 
 def prepare_fit_data(df, cfg):
+    enable_extinction = validate_extinction_config(cfg)
+    cfg["fit"]["extinction_bands"] = {}
+    cfg["fit"]["extinction_band_frequencies"] = {}
     z = cfg["burst"].get("z", None)
+    if enable_extinction:
+        z = float(z)
     
     df = df.copy()
     
@@ -206,19 +212,37 @@ def prepare_fit_data(df, cfg):
     
     fit_xrt = cfg["fit"].get("fit_xrt",False)
 
-    # remove host-extincted region (rest frame)
-    if z is not None and "max_rest_freq" in cfg["fit"]:
-        if not fit_xrt:
-            fitdata = fitdata[
-                (fitdata["freq_rest"] < cfg["fit"]["max_rest_freq"])
-                & (fitdata["obsdate"] > cfg["burst"]["fitstart"])
-            ]
-        else:
-            fitdata = fitdata[
-                ((fitdata["freq_rest"] < cfg["fit"]["max_rest_freq"]) |
-                (fitdata["freq"] >= X_RAY_MIN_FREQ_GHZ)) # Include the x-ray data
-                & (fitdata["obsdate"] > cfg["burst"]["fitstart"])
-            ]
+    # Preserve legacy selection when the optional corrections are disabled.
+    if enable_extinction:
+        fitdata = fitdata[fitdata["obsdate"] > cfg["burst"]["fitstart"]]
+        cutoff = float(cfg["fit"]["max_rest_freq"])
+        is_xray = fitdata["freq"] >= X_RAY_MIN_FREQ_GHZ
+        above_cutoff = fitdata["freq_rest"] >= cutoff
+        candidates = fitdata[above_cutoff & ~is_xray]
+        detections = candidates[(candidates["flux"] > 0) & (candidates["err"] > 0)]
+        groups = group_band_frequencies(candidates["freq"].values)
+        eligible_groups = [
+            group for group in groups
+            if detections["freq"].isin(group).sum() >= 3
+        ]
+        cfg["fit"]["extinction_band_frequencies"] = {
+            f"{PARAMETER_PREFIX}{i}": group
+            for i, group in enumerate(eligible_groups, start=1)
+        }
+        cfg["fit"]["extinction_bands"] = {
+            key: group[0]
+            for key, group in cfg["fit"]["extinction_band_frequencies"].items()
+        }
+        eligible = [frequency for group in eligible_groups for frequency in group]
+        fitdata = fitdata[
+            ((~above_cutoff | fitdata["freq"].isin(eligible)) & ~is_xray)
+            | (is_xray & fit_xrt)
+        ]
+    elif z is not None and "max_rest_freq" in cfg["fit"]:
+        below_cutoff = fitdata["freq_rest"] < cfg["fit"]["max_rest_freq"]
+        if fit_xrt:
+            below_cutoff |= fitdata["freq"] >= X_RAY_MIN_FREQ_GHZ
+        fitdata = fitdata[below_cutoff & (fitdata["obsdate"] > cfg["burst"]["fitstart"])]
     print("Total points:", len(df))
     print("After cuts:", len(fitdata))
 

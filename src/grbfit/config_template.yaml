@@ -66,6 +66,12 @@ fit:
   # for reference but excluded from fitting. Use null for no cutoff, or e.g. 50.
   min_freq: null
   max_rest_freq: 2.47e6 # GHz, FUV in rest frame, only used in z is defined.
+  # Admit non-X-ray bands above max_rest_freq with at least 3 detections.
+  # Frequencies within a 1% span share a band and correction.
+  # Each band gets a correction C >= 1: observed model = intrinsic model / C.
+  fit_above_max_rest_freq: false
+  extinction_correction_bounds: [1, 1000]
+  extinction_correction_initial: 2
   fit_xrt: false
   # MCMC controls. Use mcmc_mode: fixed for a quick fixed-length run.
   mcmc_mode: adaptive

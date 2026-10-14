@@ -17,6 +17,7 @@ import sys  # 🚪 clean exit
 import pandas as pd
 import csv
 import warnings
+from grbfit.extinction import validate_extinction_config
 from grbfit.artifacts import write_model_fit_json
 from grbfit.models import reverse_shock_default_g, reverse_shock_g_bounds
 
@@ -91,6 +92,12 @@ fit:
     # Jet-break time bounds are in observer-frame days.
     t_j: [1, 1]
   max_rest_freq: 2.47e6 # GHz, FUV in rest frame, only used in z is defined.
+  # Admit non-X-ray bands above max_rest_freq with at least 3 detections.
+  # Frequencies within a 1% span share a band and correction.
+  # Each band gets a correction C >= 1: observed model = intrinsic model / C.
+  fit_above_max_rest_freq: false
+  extinction_correction_bounds: [1, 1000]
+  extinction_correction_initial: 2
   fit_xrt: false
   # MCMC controls. Use mcmc_mode: fixed for a quick fixed-length run.
   mcmc_mode: adaptive
@@ -110,12 +117,14 @@ fit:
     print(f"👉 Please fill out the fit parameters in '{path}' and rerun.\n")
 
 # 🧠 Summarize posterior distributions
-def summarize_chain(samples, keys):
+def summarize_chain(samples, keys, cfg=None):
     print("\n=== 📊 POSTERIOR SUMMARY ===")
     for i, k in enumerate(keys):
         mcmc = np.percentile(samples[:, i], [16, 50, 84])  # 📏 credible intervals
         q = np.diff(mcmc)
-        print(f"{k} = {mcmc[1]:.4e} +{q[1]:.4e} -{q[0]:.4e}")
+        frequency = (cfg or {}).get("fit", {}).get("extinction_bands", {}).get(k)
+        label = k if frequency is None else f"{k} ({frequency:g} GHz)"
+        print(f"{label} = {mcmc[1]:.4e} +{q[1]:.4e} -{q[0]:.4e}")
 
 
 def calculate_goodness_of_fit(cfg, samples, xdata, ydata, yerr):
@@ -289,9 +298,11 @@ CORNER_SCALE = {
 }
 
 
-def plot_corner(samples, keys):
+def plot_corner(samples, keys, cfg=None):
     print("📈 Generating corner plot...")
-    labels = [CORNER_LABELS.get(key, key) for key in keys]
+    bands = (cfg or {}).get("fit", {}).get("extinction_bands", {})
+    labels = [f"C ({bands[key]:g} GHz)" if key in bands
+              else CORNER_LABELS.get(key, key) for key in keys]
     plot_samples = np.array(samples, copy=True)
     for i, key in enumerate(keys):
         plot_samples[:, i] *= CORNER_SCALE.get(key, 1.0)
@@ -904,6 +915,8 @@ def _plot_residuals(cfg, samples, xdata, ydata, yerr, instrument,
 
 def normalize_config(cfg):
 
+    validate_extinction_config(cfg)
+
     if "model" not in cfg or "type" not in cfg["model"]:
         raise ValueError("❌ config.yaml must specify model.type (forward_only or forward_reverse)")
 
@@ -1048,7 +1061,7 @@ def main(argv=None):
     print("Chain std in physical units:", np.std(flat_samples, axis=0))
 
     # 🧠 summarize posterior
-    summarize_chain(flat_samples, keys)
+    summarize_chain(flat_samples, keys, cfg)
     goodness_metrics = calculate_goodness_of_fit(cfg, flat_samples, xdata, ydata, yerr)
     goodness_of_fit_report = print_goodness_of_fit_report(
         cfg,
@@ -1060,7 +1073,7 @@ def main(argv=None):
     )
 
     # 🔺 corner plot
-    plot_corner(flat_samples, keys)
+    plot_corner(flat_samples, keys, cfg)
 
     # 🍝 posterior predictive plot
     plot_posterior_models(cfg, flat_samples, xdata, ydata, yerr, upper_df, excluded_df, instrument)

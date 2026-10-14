@@ -1,5 +1,6 @@
 import numpy as np
 import emcee
+from grbfit.extinction import PARAMETER_PREFIX, correction_factors
 from grbfit.models import (
     forward_model,
     forward_reverse_model,
@@ -24,7 +25,7 @@ LOG10_PARAMETERS = {
 
 
 def uses_log10_sampling(key):
-    return key in LOG10_PARAMETERS
+    return key in LOG10_PARAMETERS or key.startswith(PARAMETER_PREFIX)
 
 
 def _log10_checked(key, value):
@@ -86,6 +87,7 @@ def model_parameter_keys(cfg):
     if tj is not None:
         keys.append("t_j")
 
+    keys.extend(cfg["fit"].get("extinction_bands", {}))
     return keys
 
 
@@ -106,15 +108,20 @@ def build_param_vector(cfg):
 
     keys = []
     fixed_params = {}
+    initial_guesses = dict(cfg["fit"]["initial_guess"])
+    parameter_bounds = dict(cfg["fit"]["bounds"])
+    for key in cfg["fit"].get("extinction_bands", {}):
+        initial_guesses[key] = cfg["fit"].get("extinction_correction_initial", 2)
+        parameter_bounds[key] = cfg["fit"].get("extinction_correction_bounds", [1, 1000])
     for key in model_keys:
-        if key not in cfg["fit"]["bounds"]:
+        if key not in parameter_bounds:
             raise ValueError(f"❌ Missing bounds for fit parameter '{key}'")
-        if key not in cfg["fit"]["initial_guess"]:
+        if key not in initial_guesses:
             raise ValueError(f"❌ Missing initial_guess for fit parameter '{key}'")
 
-        low = float(cfg["fit"]["bounds"][key][0])
-        high = float(cfg["fit"]["bounds"][key][1])
-        initial = float(cfg["fit"]["initial_guess"][key])
+        low = float(parameter_bounds[key][0])
+        high = float(parameter_bounds[key][1])
+        initial = float(initial_guesses[key])
         if high < low:
             raise ValueError(
                 f"❌ Invalid bounds for '{key}': lower bound {low:g} is greater "
@@ -140,14 +147,14 @@ def build_param_vector(cfg):
 
     # 🔢 build p0
     p0 = np.array([
-        to_sampling_value(k, cfg["fit"]["initial_guess"][k])
+        to_sampling_value(k, initial_guesses[k])
         for k in keys
     ])
 
     bounds = np.array([
         [
-            to_sampling_value(k, cfg["fit"]["bounds"][k][0]),
-            to_sampling_value(k, cfg["fit"]["bounds"][k][1]),
+            to_sampling_value(k, parameter_bounds[k][0]),
+            to_sampling_value(k, parameter_bounds[k][1]),
         ]
         for k in keys
     ])
@@ -216,10 +223,11 @@ def evaluate_model_components(cfg, theta, ivar):
             reverse_observed = reverse_intrinsic * np.exp(-tau_abs_fs)
         total = forward + reverse_observed
 
+    correction = correction_factors(cfg, params, ivar[1])
     return {
-        "total": total,
-        "forward": forward,
-        "reverse": reverse_observed,
+        "total": total / correction,
+        "forward": forward / correction,
+        "reverse": reverse_observed / correction,
     }
 
 def make_model(cfg):
@@ -267,7 +275,10 @@ def make_model(cfg):
                 reverse_shell=reverse_shell,
                 g=params.get("g", reverse_shock_default_g(k)),
             )
-    return model
+    def observed_model(theta, ivar):
+        params = parameter_dict_from_theta(cfg, theta)
+        return model(theta, ivar) / correction_factors(cfg, params, ivar[1])
+    return observed_model
 
 
 # ---------- LOG PROBABILITY ----------

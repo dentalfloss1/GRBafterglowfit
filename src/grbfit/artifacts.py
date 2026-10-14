@@ -82,6 +82,12 @@ def build_model_fit_artifact(cfg, samples, goodness_metrics):
         key: summarize_parameter(cfg, samples, key)
         for key in model_parameter_keys(cfg)
     }
+    for key, frequency in cfg["fit"].get("extinction_bands", {}).items():
+        parameters[key]["unit"] = "dimensionless"
+        parameters[key]["observed_frequency_GHz"] = frequency
+        parameters[key]["observed_frequencies_GHz"] = cfg["fit"].get(
+            "extinction_band_frequencies", {}
+        ).get(key, [frequency])
     fixed_parameters = [
         key for key, info in parameters.items()
         if info["status"] == "fixed"
