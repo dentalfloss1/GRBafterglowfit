@@ -6,11 +6,12 @@ import matplotlib.pyplot as plt  # 📊 plotting
 import matplotlib.cm as cm
 import corner  # 🔺 posterior visualization
 
-from grbfit.data import load_data, prepare_fit_data  # 📥 data pipeline
+from grbfit.data import load_data, prepare_fit_data, prepare_upper_limit_data
 from grbfit.fit import (
     run_mcmc,
     make_model,
     samples_to_physical,
+    upper_limit_log_likelihood,
 )  # 🔧 fitting machinery
 import os  # 📂 file system checks
 import sys  # 🚪 clean exit
@@ -99,6 +100,8 @@ fit:
   extinction_correction_bounds: [1, 1000]
   extinction_correction_initial: 2
   fit_xrt: false
+  # Include selected nondetections as 3-sigma upper limits (default: true).
+  fit_upper_limits: true
   # MCMC controls. Use mcmc_mode: fixed for a quick fixed-length run.
   mcmc_mode: adaptive
   nwalkers: 32
@@ -127,7 +130,7 @@ def summarize_chain(samples, keys, cfg=None):
         print(f"{label} = {mcmc[1]:.4e} +{q[1]:.4e} -{q[0]:.4e}")
 
 
-def calculate_goodness_of_fit(cfg, samples, xdata, ydata, yerr):
+def calculate_goodness_of_fit(cfg, samples, xdata, ydata, yerr, upper_limits=None):
     theta = np.median(samples, axis=0)
     model = make_model(cfg)
     model_vals = model(theta, xdata)
@@ -145,6 +148,9 @@ def calculate_goodness_of_fit(cfg, samples, xdata, ydata, yerr):
     ndata = int(np.sum(valid))
     nfit = len(cfg["fit"]["param_keys"])
     dof = ndata - nfit
+    upper_enabled = cfg.get("fit", {}).get("fit_upper_limits", True)
+    if not upper_enabled:
+        upper_limits = None
 
     metrics = {
         "ndata": ndata,
@@ -154,6 +160,9 @@ def calculate_goodness_of_fit(cfg, samples, xdata, ydata, yerr):
         "redchisq": np.nan,
         "AIC": np.nan,
         "BIC": np.nan,
+        "fit_upper_limits": upper_enabled,
+        "nupper": 0 if upper_limits is None else len(upper_limits[1]),
+        "upper_limit_log_likelihood": upper_limit_log_likelihood(theta, model, upper_limits),
     }
 
     if ndata == 0:
@@ -171,14 +180,18 @@ def calculate_goodness_of_fit(cfg, samples, xdata, ydata, yerr):
     return metrics
 
 
-def format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr, metrics=None):
+def format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr, metrics=None, *, upper_limits=None):
     if metrics is None:
-        metrics = calculate_goodness_of_fit(cfg, samples, xdata, ydata, yerr)
+        metrics = calculate_goodness_of_fit(cfg, samples, xdata, ydata, yerr, upper_limits)
 
     lines = [
         "=== GOODNESS OF FIT ===",
+        "Detection-only diagnostics at posterior-median parameters (including AIC/BIC):",
         f"Data points used: {metrics['ndata']}",
         f"Fitted parameters: {metrics['nfit']}",
+        f"Upper-limit fitting enabled: {metrics.get('fit_upper_limits', cfg.get('fit', {}).get('fit_upper_limits', True))}",
+        f"Upper limits used: {metrics.get('nupper', 0)}",
+        f"Upper-limit log-likelihood at posterior-median parameters: {metrics.get('upper_limit_log_likelihood', 0.0):.6g}",
     ]
 
     lines.append(f"Degrees of freedom: {metrics['ndata']} - {metrics['nfit']} = {metrics['DOF']}")
@@ -201,8 +214,8 @@ def format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr, metrics=None
     return "\n".join(lines)
 
 
-def print_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr, metrics=None):
-    report = format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr, metrics)
+def print_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr, metrics=None, *, upper_limits=None):
+    report = format_goodness_of_fit_report(cfg, samples, xdata, ydata, yerr, metrics, upper_limits=upper_limits)
     print(f"\n{report}")
     return report
 
@@ -916,6 +929,9 @@ def _plot_residuals(cfg, samples, xdata, ydata, yerr, instrument,
 def normalize_config(cfg):
 
     validate_extinction_config(cfg)
+    fit_upper_limits = cfg["fit"].setdefault("fit_upper_limits", True)
+    if not isinstance(fit_upper_limits, bool):
+        raise ValueError("fit.fit_upper_limits must be true or false.")
 
     if "model" not in cfg or "type" not in cfg["model"]:
         raise ValueError("❌ config.yaml must specify model.type (forward_only or forward_reverse)")
@@ -1036,11 +1052,14 @@ def main(argv=None):
     print(f"📊 Loaded {len(df)} data points")
 
     xdata, ydata, yerr, upper_df, excluded_df, instrument = prepare_fit_data(df, cfg)
+    upper_limits = prepare_upper_limit_data(upper_df, cfg)
+    nupper = 0 if upper_limits is None else len(upper_limits[1])
+    print(f"Upper-limit fitting enabled: {cfg['fit']['fit_upper_limits']}; limits used: {nupper}")
     print("🧹 Data prepared for fitting")
 
     # 🔥 run MCMC
     print("🔥 Running MCMC sampler...")
-    keys, sampler = run_mcmc(cfg, xdata, ydata, yerr)
+    keys, sampler = run_mcmc(cfg, xdata, ydata, yerr, upper_limits=upper_limits)
     print("✅ MCMC complete")
 
     # ✂️ burn-in removal
@@ -1062,7 +1081,7 @@ def main(argv=None):
 
     # 🧠 summarize posterior
     summarize_chain(flat_samples, keys, cfg)
-    goodness_metrics = calculate_goodness_of_fit(cfg, flat_samples, xdata, ydata, yerr)
+    goodness_metrics = calculate_goodness_of_fit(cfg, flat_samples, xdata, ydata, yerr, upper_limits)
     goodness_of_fit_report = print_goodness_of_fit_report(
         cfg,
         flat_samples,

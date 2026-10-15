@@ -31,6 +31,30 @@ uncertainties describe the measurements and do not include posterior model
 uncertainty. Upper limits remain on `posterior_models.png` and are omitted
 from both residual plots.
 
+Upper limits now constrain fits by default, including when `fit.fit_upper_limits`
+is omitted from an existing configuration. Set `fit_upper_limits: false` in the
+`fit` section to restore detection-only fitting. Existing fits may therefore
+produce different posteriors after this update.
+
+Rows with `flux > 0` and `err > 0` are detections; other rows retain the existing
+upper-limit classification. For selected upper limits, `sigma = |rms|` and
+`limit = 3 * sigma`, in the input's microJy units. Sentinel `flux` and `err`
+values are not treated as measurements. Times, frequencies, and `|rms|` must
+be finite and positive. Limits follow the same selection cuts as detections,
+and at least one detection must remain.
+
+Assuming independent Gaussian measurement noise in linear flux, each limit
+adds `log Phi((limit - model_flux) / sigma)` to the likelihood, where `Phi` is
+the standard normal CDF. Predictions well above a limit are strongly penalized;
+predictions well below it receive little penalty. The detection likelihood
+remains in log-flux space. Extinction corrections apply to both kinds of data.
+
+The fit report lists whether limits are enabled, their count, and their summed
+log-likelihood at the posterior-median parameters. Chi-square, reduced chi-square,
+degrees of freedom, AIC, and BIC remain **detection-only diagnostics**, including
+the existing columns in `fit_summary.csv`; they do not describe the combined
+censored likelihood or provide full-likelihood model selection scores.
+
 ## Command line
 
 Run `grbfit` from a directory containing `config.yaml`. If that file is absent,
@@ -66,7 +90,9 @@ order, with the highest frequency at most 1.01 times the lowest; adjacent
 matches cannot chain into a wider band. For example, 4.56e14 Hz and 4.6e14 Hz
 (456000 and 460000 GHz in the input files) share one correction. Original
 frequencies are retained when evaluating the intrinsic model. Grouping applies
-to the non-X-ray data above the cutoff after the other cuts. Upper limits do not count toward eligibility and are not fitted.
+to the non-X-ray data above the cutoff after the other cuts. Upper limits do not
+count toward eligibility, but limits in eligible bands are fitted when
+`fit_upper_limits` is enabled.
 Bands with fewer than three detections remain plotted for reference. X-rays
 remain controlled by `fit_xrt` and receive no extra correction.
 

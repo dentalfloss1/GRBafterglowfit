@@ -73,6 +73,8 @@ fit:
   extinction_correction_bounds: [1, 1000]
   extinction_correction_initial: 2
   fit_xrt: false
+  # Include selected nondetections as 3-sigma upper limits (default: true).
+  fit_upper_limits: true
   # MCMC controls. Use mcmc_mode: fixed for a quick fixed-length run.
   mcmc_mode: adaptive
   nwalkers: 32

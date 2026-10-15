@@ -1,5 +1,6 @@
 import numpy as np
 import emcee
+from scipy.special import log_ndtr
 from grbfit.extinction import PARAMETER_PREFIX, correction_factors
 from grbfit.models import (
     forward_model,
@@ -290,7 +291,28 @@ def log_prior(theta, bounds):
     return 0.0
 
 
-def log_likelihood(theta, model, xdata, ydata, yerr):
+def upper_limit_log_likelihood(theta, model, upper_limits=None):
+    """Log probability of independent Gaussian measurements below their limits.
+
+    upper_limits is ((time_days, frequency_GHz), limit_Jy, sigma_Jy).
+    """
+    if upper_limits is None:
+        return 0.0
+    xupper, limits, sigma = upper_limits
+    if len(limits) == 0:
+        return 0.0
+    model_vals = model(theta, xupper)
+    if not np.all(np.isfinite(model_vals)) or np.any(model_vals <= 0):
+        return -np.inf
+    if (not np.all(np.isfinite(limits)) or np.any(limits <= 0)
+            or not np.all(np.isfinite(sigma)) or np.any(sigma <= 0)):
+        return -np.inf
+    with np.errstate(over="ignore", invalid="ignore"):
+        result = np.sum(log_ndtr((limits - model_vals) / sigma))
+    return float(result) if np.isfinite(result) else -np.inf
+
+
+def log_likelihood(theta, model, xdata, ydata, yerr, upper_limits=None):
     model_vals = model(theta, xdata)
     # 🚨 guard against bad model output
     if not np.all(np.isfinite(model_vals)):
@@ -311,20 +333,20 @@ def log_likelihood(theta, model, xdata, ydata, yerr):
 
     if not np.isfinite(log_like):
         return -np.inf
-    return log_like 
+    return log_like + upper_limit_log_likelihood(theta, model, upper_limits)
 
 
-def log_probability(theta, model, keys, xdata, ydata, yerr, bounds):
+def log_probability(theta, model, keys, xdata, ydata, yerr, bounds, upper_limits=None):
     lp = log_prior(theta, bounds)
     if not np.isfinite(lp):
         return -np.inf
     physical_theta = theta_to_physical(theta, keys)
-    return lp + log_likelihood(physical_theta, model, xdata, ydata, yerr)
+    return lp + log_likelihood(physical_theta, model, xdata, ydata, yerr, upper_limits)
 
 
 # ---------- MAIN SAMPLER ----------
 
-def run_mcmc(cfg, xdata, ydata, yerr, nwalkers=None, nsteps=None):
+def run_mcmc(cfg, xdata, ydata, yerr, nwalkers=None, nsteps=None, *, upper_limits=None):
     keys, p0, bounds = build_param_vector(cfg)
     model = make_model(cfg)
 
@@ -333,6 +355,8 @@ def run_mcmc(cfg, xdata, ydata, yerr, nwalkers=None, nsteps=None):
         raise ValueError("❌ All fit parameters are fixed; at least one parameter must have non-equal bounds for MCMC.")
 
     fit_cfg = cfg.get("fit", {})
+    if not fit_cfg.get("fit_upper_limits", True):
+        upper_limits = None
     nwalkers = int(fit_cfg.get("nwalkers", nwalkers or max(32, 2 * ndim + 2)))
     if nwalkers < 2 * ndim:
         nwalkers = 2 * ndim
@@ -358,7 +382,7 @@ def run_mcmc(cfg, xdata, ydata, yerr, nwalkers=None, nsteps=None):
         nwalkers,
         ndim,
         log_probability,
-        args=(model, keys, xdata, ydata, yerr, bounds),
+        args=(model, keys, xdata, ydata, yerr, bounds, upper_limits),
     )
 
     print(f"Burn-in: {burn_in} steps, {nwalkers} walkers, {ndim} parameters")

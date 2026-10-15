@@ -266,9 +266,41 @@ def prepare_fit_data(df, cfg):
     y = det["flux"].values * 1e-6
     yerr = np.sqrt(det["err"]**2 + det["rms"]**2).values * 1e-6
 
-    # 📦 also return upper limits for plotting
+    # Return selected upper limits for fitting and plotting.
     upper = fitdata[is_upper]
 
     # 👉 NEW: identify excluded points
     excluded = df.loc[~df.index.isin(fitdata.index)]
     return (t, nu), y, yerr, upper, excluded, instrument_det
+
+
+def prepare_upper_limit_data(upper_df, cfg):
+    """Return ((time_days, frequency_GHz), limit_Jy, sigma_Jy), or None.
+
+    Input rows must already have passed prepare_fit_data's selection cuts.
+    Existing nondetection sentinels in flux/err are not measurements; only
+    |rms| supplies the noise and the corresponding 3-sigma threshold.
+    """
+    enabled = cfg.get("fit", {}).get("fit_upper_limits", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("fit.fit_upper_limits must be true or false.")
+    if not enabled or upper_df is None or upper_df.empty:
+        return None
+
+    values = upper_df[["obsdate", "freq", "rms"]].apply(
+        pd.to_numeric, errors="coerce"
+    ).to_numpy(dtype=float)
+    t, nu, rms = values.T
+    sigma = np.abs(rms) * 1e-6
+    limit = 3.0 * sigma
+    valid = (
+        np.isfinite(t) & (t > 0) & np.isfinite(nu) & (nu > 0)
+        & np.isfinite(sigma) & (sigma > 0) & np.isfinite(limit)
+    )
+    if not np.all(valid):
+        rows = upper_df.index[~valid].tolist()
+        raise ValueError(
+            f"Invalid upper-limit rows (DataFrame indices {rows}): "
+            "obsdate, freq, and |rms| must be finite and positive."
+        )
+    return (t, nu), limit, sigma
