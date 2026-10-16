@@ -26,6 +26,8 @@ def _json_safe(value):
         return [_json_safe(v) for v in value]
     if isinstance(value, np.ndarray):
         return [_json_safe(v) for v in value.tolist()]
+    if isinstance(value, np.bool_):
+        return bool(value)
     if isinstance(value, (np.integer,)):
         return int(value)
     if isinstance(value, (np.floating,)):
@@ -133,3 +135,93 @@ def write_model_fit_json(cfg, samples, goodness_metrics, path="model_fit.json"):
         f.write("\n")
     print(f"Model fit JSON saved to {path}")
     return artifact
+
+
+def _validate_posterior(samples, keys, metadata):
+    if not isinstance(metadata, dict) or metadata.get("format") != "grbfit.posterior":
+        raise ValueError("Invalid posterior archive format")
+    if type(metadata.get("format_version")) is not int or metadata["format_version"] != 1:
+        raise ValueError("Unsupported posterior archive format_version")
+    if (keys.ndim != 1 or keys.dtype.kind != "U" or not len(keys)
+            or any(not key for key in keys) or len(set(keys)) != len(keys)):
+        raise ValueError("Posterior parameter names must be unique nonempty strings")
+    if samples.ndim != 2 or samples.shape[0] == 0 or samples.shape[1] != len(keys):
+        raise ValueError("Posterior samples must be a nonempty matrix with one column per parameter")
+    if samples.dtype.kind not in "fi" or not np.all(np.isfinite(samples)):
+        raise ValueError("Posterior samples must contain finite real numbers")
+    config = metadata.get("config")
+    if not isinstance(config, dict) or not isinstance(config.get("fit"), dict):
+        raise ValueError("Posterior metadata must include the resolved fit configuration")
+    if config["fit"].get("param_keys") != keys.tolist():
+        raise ValueError("Posterior column names do not match the resolved configuration")
+    fixed = metadata.get("fixed_params")
+    if (not isinstance(fixed, dict) or set(fixed).intersection(keys)
+            or any(type(v) not in (int, float) or not math.isfinite(v) for v in fixed.values())):
+        raise ValueError("Posterior fixed parameters must be finite values separate from sampled columns")
+    units = metadata.get("parameter_units")
+    if not isinstance(units, dict) or any(
+        not isinstance(units.get(key), str) or not units[key] for key in list(keys) + list(fixed)
+    ):
+        raise ValueError("Posterior metadata must specify units for every parameter")
+    if metadata.get("sample_space") != "linear" or metadata.get("time_frame") != "observer":
+        raise ValueError("Unsupported posterior sample space or time frame")
+    sampler = metadata.get("sampler")
+    if (not isinstance(sampler, dict) or type(sampler.get("thin")) is not int
+            or sampler["thin"] < 1):
+        raise ValueError("Posterior metadata must specify a positive integer thinning factor")
+
+
+def write_posterior_samples(cfg, samples, sampler_diagnostics, path="posterior_samples.npz"):
+    """Save retained joint draws in linear observable units, without pickle.
+
+    Samples must already exclude burn-in and use cfg['fit']['param_keys'] order.
+    Fixed parameters are stored separately, not duplicated in sample columns.
+    """
+    keys = np.asarray(cfg["fit"]["param_keys"], dtype=str)
+    samples = np.asarray(samples)
+    fixed = dict(cfg["fit"].get("fixed_params", {}))
+    if "p" not in keys and "p" not in fixed:
+        fixed["p"] = cfg["model"].get("p", 2.2)
+    metadata = _json_safe({
+        "format": "grbfit.posterior",
+        "format_version": 1,
+        "sample_space": "linear",
+        "time_frame": "observer",
+        "frequency_frame": "observer",
+        "burn_in_removed": True,
+        "fixed_params": fixed,
+        "parameter_units": {
+            key: PARAMETER_UNITS.get(key, "dimensionless")
+            for key in list(keys) + list(fixed)
+        },
+        "config": cfg,
+        "sampler": {"thin": 1, **sampler_diagnostics},
+    })
+    _validate_posterior(samples, keys, metadata)
+    # An explicit file handle preserves the requested filename exactly.
+    with open(path, "wb") as stream:
+        np.savez_compressed(
+            stream, samples=samples, param_keys=keys,
+            metadata_json=np.asarray(json.dumps(metadata, allow_nan=False)),
+        )
+    print(f"Posterior samples saved to {path}")
+
+
+def load_posterior_samples(path="posterior_samples.npz"):
+    """Return (samples, ordered parameter names, metadata) from a v1 archive.
+
+    Each row is a joint draw in linear units. This loader needs neither the
+    original config.yaml nor model_fit.json and never enables pickle loading.
+    """
+    try:
+        with np.load(path, allow_pickle=False) as archive:
+            samples = archive["samples"]
+            keys = archive["param_keys"]
+            encoded = archive["metadata_json"]
+            if encoded.shape != () or encoded.dtype.kind != "U":
+                raise ValueError("Posterior metadata_json must be a scalar JSON string")
+            metadata = json.loads(encoded.item())
+    except (KeyError, ValueError, TypeError) as exc:
+        raise ValueError(f"Invalid posterior archive: {exc}") from exc
+    _validate_posterior(samples, keys, metadata)
+    return samples, keys.tolist(), metadata

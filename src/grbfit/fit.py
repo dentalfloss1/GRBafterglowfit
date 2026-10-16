@@ -3,6 +3,7 @@ import emcee
 from scipy.special import log_ndtr
 from grbfit.extinction import PARAMETER_PREFIX, correction_factors
 from grbfit.models import (
+    UnsupportedBreakOrderingError,
     forward_model,
     forward_reverse_model,
     forward_shock_flux,
@@ -341,7 +342,12 @@ def log_probability(theta, model, keys, xdata, ydata, yerr, bounds, upper_limits
     if not np.isfinite(lp):
         return -np.inf
     physical_theta = theta_to_physical(theta, keys)
-    return lp + log_likelihood(physical_theta, model, xdata, ydata, yerr, upper_limits)
+    try:
+        return lp + log_likelihood(physical_theta, model, xdata, ydata, yerr, upper_limits)
+    except UnsupportedBreakOrderingError:
+        # Broad priors or later evolution can leave the implemented regimes.
+        # Reject that proposal without masking unrelated configuration errors.
+        return -np.inf
 
 
 # ---------- MAIN SAMPLER ----------

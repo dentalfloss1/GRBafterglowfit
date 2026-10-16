@@ -70,6 +70,99 @@ steps for an exploratory fit. It overrides the sampler settings in memory for
 that run; `config.yaml` is not changed. Run `grbfit` without the flag for the
 configured sampler settings.
 
+New templates use `t0 = t0_rev = 0.05` observer-frame days. The forward-shock
+starting values at this epoch are `f0=0.005 Jy`, `nua_0=80 GHz`,
+`num_0=1e4 GHz`, and `nuc_0=2e8 GHz`: rounded values evolved from the old
+one-day defaults using the default wind model. Reverse-shock starting values
+retain their existing 0.05-day reference epoch.
+
+Both shocks now have default frequency bounds of `[1, 1e6] GHz` for `nu_a`,
+`[1e-2, 1e9] GHz` for `nu_m`, and `[1e6, 1e12] GHz` for `nu_c`. Because
+sampled bounds are open, these ensure `nu_a < nu_c` at the reference epoch
+while allowing all three supported positions of `nu_m`. These are starting
+priors to adapt to the burst, not constraints established by the data.
+The flux bounds are `[1e-8, 10] Jy` for the forward shock and
+`[1e-8, 1e5] Jy` for the reverse shock. Jet-time bounds are `[0.05, 1e3]`
+days; `t_j` still defaults to `null`. Set its initial guess to a value inside
+those bounds, for example `0.3`, to fit a jet break.
+
+During MCMC, unsupported break orderings, including ones reached during
+reverse-shock evolution, receive zero probability rather than aborting the
+run. Direct model calls still report unsupported orderings as errors.
+Existing burst configs and saved fits keep their explicit reference times
+and priors. Moving an existing fit to another reference time requires
+consistent observable values and a new fit; editing the archived time alone
+does not transform its posterior.
+
+### Saved posterior samples
+
+Every fit, including `--quick`, writes `posterior_samples.npz` before plotting.
+It contains the same post-burn-in, thinned joint draws used for the reported
+results. Rows preserve correlations between parameters; columns follow the
+saved `param_keys` order. Values are in **linear observable units**, not the
+log10 coordinates used internally by the sampler: flux in Jy, frequencies in
+observer-frame GHz, times in observer-frame days, and dimensionless `p`, `g`,
+and extinction corrections.
+
+```python
+from grbfit.artifacts import load_posterior_samples
+
+samples, keys, metadata = load_posterior_samples("posterior_samples.npz")
+f0_draws = samples[:, keys.index("f0")]
+fixed_parameters = metadata["fixed_params"]
+redshift = metadata["config"]["burst"]["z"]
+```
+
+Fixed parameters are stored separately from sampled columns. All fitted
+parameters are included, including reverse-shock parameters, extinction
+corrections, `p`, and `t_j` when fitted. The self-contained archive embeds the
+resolved configuration (including quick-mode overrides, bounds, reference
+times, redshift, and medium type), parameter units, and sampler diagnostics
+including the thinning factor and convergence status. Undefined diagnostics
+are stored as JSON `null`. Saving samples does not imply convergence or that
+every spectral break is constrained.
+
+The version-1 archive contains `samples`, `param_keys`, and a scalar JSON
+string `metadata_json`; it can also be opened with
+`numpy.load(path, allow_pickle=False)`. The loader validates the format,
+version, dimensions, parameter names, and finite sample values. Neither the
+original `config.yaml` nor `model_fit.json` is needed to load it.
+
+Repeated runs in the same directory replace this file, like the existing
+outputs. This is a retained-posterior export, not a resumable MCMC checkpoint.
+It provides input for the separate physical-parameter and jet-angle
+calculation described below. Existing summary-only
+files cannot reconstruct joint samples, so older fits require rerunning unless
+their chains were saved elsewhere.
+
+### Physical parameters and jet angle
+
+```sh
+grbfit-physical posterior_samples.npz --output-dir physical
+# Or, without reinstalling the console entry point:
+python -m grbfit.physical posterior_samples.npz --output-dir physical
+```
+
+This separate calculation transforms each joint draw into isotropic kinetic
+energy, ISM density `n` or wind `A_star`, `epsilon_e`, and `epsilon_B`. When
+`t_j` is present, it also derives the jet half-opening angle and beaming-corrected
+kinetic energy. It uses the forward-shock component in either model type.
+Outputs are `physical_samples.npz` and `physical_summary.json`.
+
+The prescription assumes adiabatic synchrotron emission, all electrons
+accelerated (`xi_e=1`), and no inverse-Compton cooling correction (`Y=0`).
+It supports `k=0` or `k=2`, all three fitted spectral orderings, and `p>2`.
+The archived reference time `burst.t0` must precede `t_j` for jet fits; this is
+elapsed time since the trigger, not a calendar trigger date.
+
+Redshift must be in the archive or supplied with `--redshift`. Distance is
+computed with flat LambdaCDM (`H0=70`, `Omega_m=0.3`), or supplied using
+`--distance-cm`. Fixed spectral observables require `--allow-fixed-observables`
+and produce conditional results. Invalid draws are flagged, retained, and
+counted; summary intervals use valid draws only. See
+[the physical prescription and output definitions](docs/physical_parameters.md)
+for equations, assumptions, normalization conventions, and limitations.
+
 ### Fitting extinction-affected bands above the cutoff
 
 By default, bands at or above `fit.max_rest_freq` remain excluded. To fit

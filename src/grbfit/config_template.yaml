@@ -3,7 +3,7 @@
 burst:
   name: your_grb_name_here
   # Times are in observer-frame days.
-  t0: 1.0
+  t0: 0.05
   t0_rev: 0.05
   fitstart: 0.01
   z: null
@@ -32,36 +32,39 @@ model:
 
 fit:
   initial_guess:
-    # Electron index; equal bounds keep it fixed.
+    # Electron index p: starting value when fitted, fixed value otherwise.
+    # To fit p, set bounds.p below to distinct limits, e.g. [2.0, 3.0].
     p: 2.2
-    # Flux normalizations are in Jy.
-    f0: 1e-3
+    # Flux normalizations are in Jy at the corresponding reference time.
+    f0: 5e-3
     f0_rev: 5e-5
     # Break frequencies are in GHz.
     nua0_rev: 10
     num0_rev: 100
     nuc0_rev: 8e8
-    nua_0: 13
-    num_0: 100
-    nuc_0: 8e8
-    # Jet-break time is in observer-frame days.
+    nua_0: 80
+    num_0: 1e4
+    nuc_0: 2e8
+    # Jet-break time is in observer-frame days; null disables the jet.
+    # To fit an early jet break, use an initial value such as 0.3.
     t_j: null
   bounds:
     # Set lower and upper equal to remove a parameter from fitting.
     # The fixed value will be the corresponding initial_guess value.
-    p: [2.2, 2.2]
+    p: [2.2, 2.2]  # Fixed by default; change to [2.0, 3.0] to fit p.
     # Flux normalization bounds are in Jy.
-    f0: [1e-6, 1]
-    f0_rev: [3e-5, 1e5]
-    # Break-frequency bounds are in GHz.
-    nua0_rev: [0.1, 1e6]
-    num0_rev: [0.1, 1e6]
-    nuc0_rev: [1e8, 2e9]
-    nua_0: [6, 15]
-    num_0: [33, 1e4]
-    nuc_0: [1e8, 2e9]
+    f0: [1e-8, 10]
+    f0_rev: [1e-8, 1e5]
+    # Break-frequency bounds are in GHz. Non-overlapping nu_a/nu_c
+    # ranges ensure nu_a < nu_c at the reference epoch (bounds are open).
+    nua0_rev: [1, 1e6]
+    num0_rev: [1e-2, 1e9]
+    nuc0_rev: [1e6, 1e12]
+    nua_0: [1, 1e6]
+    num_0: [1e-2, 1e9]
+    nuc_0: [1e6, 1e12]
     # Jet-break time bounds are in observer-frame days.
-    t_j: [1, 1]
+    t_j: [0.05, 1e3]
   # Minimum observed frequency in GHz (inclusive). Lower frequencies are plotted
   # for reference but excluded from fitting. Use null for no cutoff, or e.g. 50.
   min_freq: null

@@ -1,5 +1,10 @@
 import numpy as np
 
+
+class UnsupportedBreakOrderingError(ValueError):
+    """A trial spectrum lies outside the implemented break orderings."""
+
+
 RS_SLOW_COOLING = "nu_a < nu_m < nu_c"
 RS_FAST_COOLING = "nu_a < nu_c < nu_m"
 RS_SELF_ABSORBED_SLOW = "nu_m < nu_a < nu_c"
@@ -114,7 +119,7 @@ def _forward_shock_initial_regime(nua0, num0, nuc0):
         return FS_FAST_COOLING
     if num0 < nua0 < nuc0:
         return FS_SELF_ABSORBED_SLOW
-    raise ValueError(
+    raise UnsupportedBreakOrderingError(
         "Unsupported forward-shock break ordering at t0. "
         "Supported adiabatic relativistic orderings are "
         f"{FS_SLOW_COOLING}, {FS_FAST_COOLING}, and {FS_SELF_ABSORBED_SLOW}; "
@@ -428,7 +433,7 @@ def _reverse_shock_initial_regime(nua0, num0, nuc0):
         return RS_FAST_COOLING
     if num0 < nua0 < nuc0:
         return RS_SELF_ABSORBED_SLOW
-    raise ValueError(
+    raise UnsupportedBreakOrderingError(
         "Unsupported reverse-shock break ordering at t0_rev. "
         "Supported reverse-shock orderings are "
         f"{RS_SLOW_COOLING}, {RS_FAST_COOLING}, and {RS_SELF_ABSORBED_SLOW}; "
@@ -502,7 +507,7 @@ def _reverse_shock_branch_state(
         num = nu_cross * scale ** bm_t
         nuc = nuc_cross * scale ** bc_t
         if not (num < nua < nuc):
-            raise ValueError(
+            raise UnsupportedBreakOrderingError(
                 "Unsupported reverse-shock break ordering after nu_a/nu_m "
                 f"crossing: nu_m={num:g}, nu_a={nua:g}, nu_c={nuc:g}."
             )
@@ -522,7 +527,7 @@ def _reverse_shock_branch_state(
             nua = nua0 * scale ** ba_i
             num = num0 * scale ** bm_i
             nuc = nuc0 * scale ** bc_i
-            raise ValueError(
+            raise UnsupportedBreakOrderingError(
                 "Unsupported reverse-shock break ordering after nu_a/nu_c "
                 f"crossing: nu_a={nua:g}, nu_c={nuc:g}, nu_m={num:g}."
             )

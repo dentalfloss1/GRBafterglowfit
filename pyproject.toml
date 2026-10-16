@@ -24,6 +24,7 @@ dependencies = [
 [project.scripts]
 grbfit = "grbfit.run:main"
 grbfit-detectability = "grbfit.detectability:main"
+grbfit-physical = "grbfit.physical:main"
 
 # 📦 Tell setuptools where your package lives
 [tool.setuptools.packages.find]

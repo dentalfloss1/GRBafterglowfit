@@ -19,7 +19,7 @@ import pandas as pd
 import csv
 import warnings
 from grbfit.extinction import validate_extinction_config
-from grbfit.artifacts import write_model_fit_json
+from grbfit.artifacts import write_model_fit_json, write_posterior_samples
 from grbfit.models import reverse_shock_default_g, reverse_shock_g_bounds
 
 def create_template_config(path="config.yaml"):
@@ -33,7 +33,7 @@ def create_template_config(path="config.yaml"):
 burst:
   name: your_grb_name_here
   # Times are in observer-frame days.
-  t0: 1.0
+  t0: 0.05
   t0_rev: 0.05
   fitstart: 0.01
   z: null
@@ -64,34 +64,36 @@ fit:
   initial_guess:
     # Electron index; equal bounds keep it fixed.
     p: 2.2
-    # Flux normalizations are in Jy.
-    f0: 1e-3
+    # Flux normalizations are in Jy at the corresponding reference time.
+    f0: 5e-3
     f0_rev: 5e-5
     # Break frequencies are in GHz.
     nua0_rev: 10
     num0_rev: 100
     nuc0_rev: 8e8
-    nua_0: 13
-    num_0: 100
-    nuc_0: 8e8
-    # Jet-break time is in observer-frame days.
+    nua_0: 80
+    num_0: 1e4
+    nuc_0: 2e8
+    # Jet-break time is in observer-frame days; null disables the jet.
+    # To fit an early jet break, use an initial value such as 0.3.
     t_j: null
   bounds:
     # Set lower and upper equal to remove a parameter from fitting.
     # The fixed value will be the corresponding initial_guess value.
     p: [2.2, 2.2]
     # Flux normalization bounds are in Jy.
-    f0: [1e-6, 1]
-    f0_rev: [3e-5, 1e5]
-    # Break-frequency bounds are in GHz.
-    nua0_rev: [0.1, 1e6]
-    num0_rev: [0.1, 1e6]
-    nuc0_rev: [1e8, 2e9]
-    nua_0: [6, 15]
-    num_0: [33, 1e4]
-    nuc_0: [1e8, 2e9]
+    f0: [1e-8, 10]
+    f0_rev: [1e-8, 1e5]
+    # Break-frequency bounds are in GHz. Non-overlapping nu_a/nu_c
+    # ranges ensure nu_a < nu_c at the reference epoch (bounds are open).
+    nua0_rev: [1, 1e6]
+    num0_rev: [1e-2, 1e9]
+    nuc0_rev: [1e6, 1e12]
+    nua_0: [1, 1e6]
+    num_0: [1e-2, 1e9]
+    nuc_0: [1e6, 1e12]
     # Jet-break time bounds are in observer-frame days.
-    t_j: [1, 1]
+    t_j: [0.05, 1e3]
   max_rest_freq: 2.47e6 # GHz, FUV in rest frame, only used in z is defined.
   # Admit non-X-ray bands above max_rest_freq with at least 3 detections.
   # Frequencies within a 1% span share a band and correction.
@@ -1068,6 +1070,7 @@ def main(argv=None):
     print(f"✂️ Flattening production chain with thin={thin}...")
     flat_samples_sampling = sampler.get_chain(discard=0, thin=thin, flat=True)
     flat_samples = samples_to_physical(flat_samples_sampling, keys)
+    write_posterior_samples(cfg, flat_samples, sampler_diagnostics)
     print(f"📦 Final sample size: {len(flat_samples)}")
     if sampler_diagnostics:
         print(
