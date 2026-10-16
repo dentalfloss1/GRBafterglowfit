@@ -152,6 +152,11 @@ map directly to the original archive. Columns are `E_k_iso`, `n` or `A_star`,
 `epsilon_e`, `epsilon_B`, plus `theta_j_rad`, `theta_j_deg`, and
 `E_k_beaming_corrected` when a jet time is present.
 
+`physical_corner.png` shows the valid joint physical draws. Energy, density,
+energy fractions, and beaming-corrected energy use base-10 logarithmic axes;
+jet angle uses degrees. If fewer valid draws remain than plotted parameters,
+the image displays a count message rather than stale contours from an earlier run.
+
 `physical_summary.json` contains the assumptions, prescription, units,
 original metadata, counts by regime and status, excluded fraction, warnings,
 and the 16th, 50th, and 84th percentiles of **valid rows only**. Repeated runs

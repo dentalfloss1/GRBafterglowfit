@@ -147,7 +147,10 @@ This separate calculation transforms each joint draw into isotropic kinetic
 energy, ISM density `n` or wind `A_star`, `epsilon_e`, and `epsilon_B`. When
 `t_j` is present, it also derives the jet half-opening angle and beaming-corrected
 kinetic energy. It uses the forward-shock component in either model type.
-Outputs are `physical_samples.npz` and `physical_summary.json`.
+Outputs are `physical_samples.npz`, `physical_summary.json`, and
+`physical_corner.png`. The corner plot shows the valid physical draws in
+logarithmic energy, density, and energy fractions; jet fits also show the
+opening angle in degrees and beaming-corrected kinetic energy.
 
 The prescription assumes adiabatic synchrotron emission, all electrons
 accelerated (`xi_e=1`), and no inverse-Compton cooling correction (`Y=0`).

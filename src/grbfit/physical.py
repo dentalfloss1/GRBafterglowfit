@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 
 import numpy as np
+import corner
+import matplotlib.pyplot as plt
 from scipy.integrate import quad
 from scipy.special import gammaln
 
@@ -252,6 +254,50 @@ def derive_physical_posterior(samples, keys, metadata, *, z=None, distance_cm=No
     return derived, names, status, report
 
 
+def plot_physical_corner(samples, names, status, path):
+    """Plot physically valid joint draws, with logarithmic positive parameters."""
+    valid = samples[status == "valid"]
+    columns = ["E_k_iso", names[1], "epsilon_e", "epsilon_B"]
+    if "theta_j_deg" in names:
+        columns += ["theta_j_deg", "E_k_beaming_corrected"]
+    if len(valid) < len(columns):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        ax.text(.5, .5, f"Only {len(valid)} valid draw(s); a {len(columns)}-parameter corner plot needs at least {len(columns)}.",
+                ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+    else:
+        labels = {
+            "E_k_iso": r"$\log_{10}(E_{\rm k,iso}/{\rm erg})$",
+            "n": r"$\log_{10}(n/{\rm cm}^{-3})$",
+            "A_star": r"$\log_{10}(A_*)$",
+            "epsilon_e": r"$\log_{10}(\epsilon_e)$",
+            "epsilon_B": r"$\log_{10}(\epsilon_B)$",
+            "theta_j_deg": r"$\theta_j\ ({\rm deg})$",
+            "E_k_beaming_corrected": r"$\log_{10}(E_{\rm k}/{\rm erg})$",
+        }
+        plotted = np.column_stack([
+            valid[:, names.index(name)] if name == "theta_j_deg"
+            else np.log10(valid[:, names.index(name)])
+            for name in columns
+        ])
+        # Constant columns are possible when observables are fixed. Give the
+        # histogram a finite range without changing any plotted sample.
+        ranges = []
+        for column in plotted.T:
+            low, high = float(np.min(column)), float(np.max(column))
+            pad = max((high-low)*.05, 1e-6)
+            ranges.append((low-pad, high+pad))
+        fig = corner.corner(
+            plotted, labels=[labels[name] for name in columns], range=ranges,
+            quantiles=[.16, .5, .84], show_titles=True, title_fmt=".2f",
+            plot_contours=len(valid) >= 500, plot_density=len(valid) >= 500,
+            plot_datapoints=len(valid) < 500,
+            max_n_ticks=3,
+        )
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Derive forward-shock physical parameters from saved joint draws.")
     parser.add_argument("posterior", nargs="?", default="posterior_samples.npz")
@@ -278,12 +324,13 @@ def main(argv=None):
                         source_sample_index=np.arange(len(samples)), status=status,
                         metadata_json=np.asarray(encoded))
     (output / "physical_summary.json").write_text(encoded + "\n")
+    plot_physical_corner(derived, names, status, output / "physical_corner.png")
     print(f"Physical conversion: {report['valid_draws']}/{report['total_draws']} valid draws")
     for name, entry in report["summary"].items():
         print(f"{name}: {entry['median']:.6g} [{entry['q16']:.6g}, {entry['q84']:.6g}] {entry['unit']}")
     for message in report["warnings"]:
         print(f"Warning: {message}")
-    print(f"Saved physical_samples.npz and physical_summary.json in {output}")
+    print(f"Saved physical_samples.npz, physical_summary.json, and physical_corner.png in {output}")
     if not report["valid_draws"]:
         raise SystemExit(1)
 

@@ -12,7 +12,7 @@ from grbfit.artifacts import write_posterior_samples
 from grbfit.models import _forward_shock_spectrum, FS_SELF_ABSORBED_SLOW
 from grbfit.physical import (
     MPC, derive_physical_posterior, jet_half_angle, luminosity_distance_cm,
-    main, predict_observables,
+    main, plot_physical_corner, predict_observables,
 )
 
 
@@ -149,6 +149,8 @@ class PhysicalTests(unittest.TestCase):
             original = source.read_bytes()
             main([str(source), "--output-dir", directory, "--distance-cm", "1e28"])
             self.assertEqual(source.read_bytes(), original)
+            self.assertEqual((Path(directory)/"physical_corner.png").read_bytes()[:8],
+                             b"\x89PNG\r\n\x1a\n")
             report = json.loads((Path(directory)/"physical_summary.json").read_text())
             self.assertEqual(report["assumptions"]["Y"], 0)
             self.assertEqual(report["valid_draws"], 2)
@@ -166,6 +168,27 @@ class PhysicalTests(unittest.TestCase):
             report = json.loads((Path(directory)/"physical_summary.json").read_text())
             self.assertEqual(report["summary"], {})
             self.assertEqual(report["status_counts"], {"unsupported_p": 2})
+            self.assertEqual((Path(directory)/"physical_corner.png").read_bytes()[:8],
+                             b"\x89PNG\r\n\x1a\n")
+
+    def test_populated_corner_plot_includes_jet_parameters(self):
+        samples, keys, metadata, _ = synthetic(jet=True)
+        rng = np.random.default_rng(7)
+        rows = []
+        for _ in range(80):
+            energy, density, ee, eb = np.array([1e52, 1, .1, .1]) * np.exp(rng.normal(0, .06, 4))
+            observables = predict_observables(energy, density, ee, eb, p=2.2,
+                                               k=0, time_days=1, z=1,
+                                               distance_cm=1e28, regime="slow")
+            rows.append([*observables, 2.2, 2.])
+        derived, names, status, report = derive_physical_posterior(
+            np.array(rows), keys, metadata, distance_cm=1e28,
+        )
+        self.assertEqual(report["valid_draws"], 80)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "physical_corner.png"
+            plot_physical_corner(derived, names, status, path)
+            self.assertGreater(path.stat().st_size, 10_000)
 
 
 if __name__ == "__main__":
